@@ -1,18 +1,17 @@
 // ==UserScript==
-// @name         Customizable Bazaar Filler
-// @namespace    http://tampermonkey.net/
-// @version      1.80
-// @description  On click, auto-fills bazaar item quantities and prices based on your preferences
+// @name         Customizable Bazaar Filler Extended
+// @namespace    j0se
+// @version      1.0 stable before css changes (fork of 1.80)
+// @description  On click, auto-fills bazaar item quantities and prices based on your preferences wuth caps, better explanation, mobike bubbles, debug, different bazaar choosing, etc
 // @match        https://www.torn.com/bazaar.php*
 // @require      https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @connect      weav3r.dev
-// @downloadURL https://update.greasyfork.org/scripts/527925/Customizable%20Bazaar%20Filler.user.js
-// @updateURL https://update.greasyfork.org/scripts/527925/Customizable%20Bazaar%20Filler.meta.js
+// @downloadURL not available yet
+// @updateURL not available yet
 // ==/UserScript==
-
 
 (function () {
     "use strict";
