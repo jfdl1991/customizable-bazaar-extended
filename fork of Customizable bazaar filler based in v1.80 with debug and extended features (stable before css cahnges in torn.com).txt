@@ -1,13 +1,12 @@
 // ==UserScript==
-// @name         Customizable Bazaar Filler
-// @namespace    http://tampermonkey.net/
-// @version      1.0 (1.80 forking)
-// @description  On click, auto-fills bazaar item quantities and prices based on your preferences. fork with extra features like capping, smart bazaar fetches and more.
+// @name         Customizable Bazaar Filler Extended
+// @namespace    j0se
+// @version      1.0 stable before css changes (fork of 1.80)
+// @description  On click, auto-fills bazaar item quantities and prices based on your preferences wuth caps, better explanation, mobike bubbles, debug, different bazaar choosing, etc
 // @match        https://www.torn.com/bazaar.php*
 // @require      https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @grant        GM_registerMenuCommand
 // @grant        GM_xmlhttpRequest
 // @connect      weav3r.dev
 // @downloadURL not available yet
@@ -18,8 +17,17 @@
 (function () {
     "use strict";
 
+    const DEBUG = true; // Set to false to disable logging
+    function debug(message, ...data) {
+        if (DEBUG) {
+            console.log(`[Customizable Bazar filler]: ${message}`, ...data);
+        }
+    }
+    debug("Script starting...");
+
     function handleError(error, context = '') {
         console.error(`[Bazaar Filler] ${context}:`, error);
+        debug(`Error in ${context}:`, error);
 
         if (error.userMessage) {
             alert(error.userMessage);
@@ -28,8 +36,11 @@
 
     function safeExecute(fn, context = '') {
         return async function(...args) {
+            debug(`Executing ${context}`);
             try {
-                return await fn.apply(this, args);
+                const result = await fn.apply(this, args);
+                debug(`Finished executing ${context}`);
+                return result;
             } catch (error) {
                 handleError(error, context);
                 return null;
@@ -38,123 +49,50 @@
     }
 
     const styleBlock = `
-  .item-toggle {
-      width: 18px;
-      height: 18px;
-      border-radius: 4px;
-      -webkit-appearance: none;
-      -moz-appearance: none;
-      appearance: none;
-      outline: none;
+  /* checkbox visibility improvements (dark/light) */
+  .item-toggle{
+      -webkit-appearance:none; -moz-appearance:none; appearance:none;
+      display:inline-flex; align-items:center; justify-content:center;
+      width:22px; height:22px; border-radius:4px; border:2px solid;
+      background:transparent; cursor:pointer; box-sizing:border-box; font-size:13px; line-height:1;
+      position:relative;
   }
-  @keyframes spin {
-      from { transform: rotate(0deg); }
-      to { transform: rotate(360deg); }
+  .item-toggle::after{
+      content:'✔'; display:none;
   }
-  .item-toggle::after {
-      content: '\\2713';
-      position: absolute;
-      font-size: 14px;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      display: none;
-  }
-  .item-toggle:checked::after {
-      display: block;
-  }
+  .item-toggle:checked::after{ display:block; }
 
-  body:not(.dark-mode) .item-toggle {
-      border: 1px solid #ccc;
-      background: #fff;
-  }
-  body:not(.dark-mode) .item-toggle:checked {
-      background: #007bff;
-  }
-  body:not(.dark-mode) .item-toggle:checked::after {
-      color: #fff;
-  }
+  body.dark-mode .item-toggle{ border-color:#9aa4b2; background:rgba(255,255,255,0.04); color:#9eff9e; }
+  body.dark-mode .item-toggle:checked{ background:rgba(120,255,120,0.12); }
 
-  body.dark-mode .item-toggle {
-      border: 1px solid #4e535a;
-      background: #2f3237;
-  }
-  body.dark-mode .item-toggle:checked {
-      background: #4e535a;
-  }
-  body.dark-mode .item-toggle:checked::after {
-      color: #fff;
-  }
+  body:not(.dark-mode) .item-toggle{ border-color:#666; background:rgba(0,0,0,0.04); color:#0a7; }
+  body:not(.dark-mode) .item-toggle:checked{ background:rgba(0,180,0,0.12); }
 
-  .checkbox-wrapper {
-      position: absolute;
-      top: 50%;
-      right: 8px;
-      width: 30px;
-      height: 30px;
-      transform: translateY(-50%);
-      cursor: pointer;
-  }
-  .checkbox-wrapper input.item-toggle {
-      position: absolute;
-      top: 6px;
-      left: 6px;
-  }
+  .checkbox-wrapper{position:absolute;top:50%;right:8px;width:34px;height:34px;transform:translateY(-50%);cursor:pointer;z-index:5}
+  .checkbox-wrapper input.item-toggle{position:absolute;left:6px;top:6px}
 
-  .settings-modal-overlay {
-      position: fixed;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      background: rgba(0,0,0,0.5);
-      z-index: 9999;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-  }
-  .settings-modal {
-      background: #fff;
-      padding: 20px;
-      border-radius: 8px;
-      min-width: 300px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-      color: #000;
-  }
-  .settings-modal h2 {
-      margin-top: 0;
-  }
-  .settings-modal label {
-      display: block;
-      margin: 10px 0 5px;
-  }
-  .settings-modal input, .settings-modal select {
-      width: 100%;
-      padding: 5px;
-      box-sizing: border-box;
-  }
-  .settings-modal button {
-      margin-top: 15px;
-      padding: 5px 10px;
-  }
-  .settings-modal div[style*="text-align:right"] {
-      text-align: right;
-  }
-  body.dark-mode .settings-modal {
-      background: #2f3237;
-      color: #fff;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.7);
-  }
-  body.dark-mode .settings-modal input,
-  body.dark-mode .settings-modal select {
-      background: #3c3f41;
-      color: #fff;
-      border: 1px solid #555;
-  }
-  body.dark-mode .settings-modal button {
-      background: #555;
-      color: #fff;
-      border: none;
-  }
-
+  /* rest of modal styles (kept compact & responsive) */
+  .settings-modal-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center}
+  .settings-modal{background:#2f3237;color:#fff;padding:10px;border-radius:10px;width:92%;max-width:360px;box-shadow:0 2px 20px rgba(0,0,0,0.6);font-family:Arial, sans-serif;font-size:14px;max-height:86vh;overflow:auto}
+  body:not(.dark-mode) .settings-modal{background:#fff;color:#111}
+  .settings-modal h2{margin:0 0 8px 0;font-weight:700;text-decoration:underline;font-size:16px}
+  .settings-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+  .settings-row .label{min-width:120px;font-weight:500}
+  .settings-row .compact-input{padding:6px;box-sizing:border-box;font-size:14px}
+  .compact-number{width:60px}
+  .compact-number-sm{width:48px}
+  .compact-select{width:180px}
+  .bf-help-btn{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#666;color:#fff;font-size:12px;cursor:pointer;margin-left:6px;flex:0 0 auto}
+  body:not(.dark-mode) .bf-help-btn{background:#e0e0e0;color:#222}
+  .bf-listings-btn{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#555;color:#fff;font-size:11px;cursor:pointer;margin-left:4px;border:1px solid #777}
+  body:not(.dark-mode) .bf-listings-btn{background:#eee;color:#333;border-color:#999}
+  .tooltip-bubble{position:fixed;z-index:100000;background:#111;color:#fff;padding:8px;border-radius:8px;max-width:320px;font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,0.6)}
+  body:not(.dark-mode) .tooltip-bubble{background:#fff;color:#111;border:1px solid #ccc}
+  .settings-small-note{font-size:12px;color:#cfcfcf;margin-top:6px}
+  .settings-modal button { color: inherit !important; background: transparent !important; border-radius:6px; padding:6px 8px; border:1px solid rgba(255,255,255,0.06); cursor:pointer; }
+  body:not(.dark-mode) .settings-modal button { border:1px solid #ddd; }
+  @media (max-width:420px){.settings-row .label{min-width:90px;font-size:13px}.compact-select{width:140px}}
+  
   .black-friday-active {
       color: #28a745 !important;
   }
@@ -171,24 +109,39 @@
         .prop("type", "text/css")
         .html(styleBlock)
         .appendTo("head");
+    debug("CSS styles injected.");
 
-    let apiKey = GM_getValue("tornApiKey", "");
-    let pricingSource = GM_getValue("pricingSource", "Market Value");
+    const getValue = GM_getValue;
+    const setValue = GM_setValue;
+
+    let apiKey = getValue("tornApiKey", "");
+    debug("API Key loaded:", apiKey ? "found" : "not found");
+    let pricingSource = getValue("pricingSource", "Market Value");
+    debug("Pricing Source loaded:", pricingSource);
     if (pricingSource === "Bazaars/TornPal") {
         pricingSource = "Bazaars/weav3r.dev";
-        GM_setValue("pricingSource", pricingSource);
+        setValue("pricingSource", pricingSource);
+        debug("Migrated pricing source from TornPal to weav3r.dev");
     }
-    let itemMarketOffset = GM_getValue("itemMarketOffset", -1);
-    let itemMarketMarginType = GM_getValue("itemMarketMarginType", "absolute");
-    let itemMarketListing = GM_getValue("itemMarketListing", 1);
-    let itemMarketClamp = GM_getValue("itemMarketClamp", false);
-    let marketMarginOffset = GM_getValue("marketMarginOffset", 0);
-    let marketMarginType = GM_getValue("marketMarginType", "absolute");
-    let bazaarMarginOffset = GM_getValue("bazaarMarginOffset", 0);
-    let bazaarMarginType = GM_getValue("bazaarMarginType", "absolute");
-    let bazaarClamp = GM_getValue("bazaarClamp", false);
-    let bazaarListing = GM_getValue("bazaarListing", 1);
-    let blackFridayMode = GM_getValue("blackFridayMode", false);
+    let itemMarketOffset = getValue("itemMarketOffset", -1);
+    let itemMarketMarginType = getValue("itemMarketMarginType", "absolute");
+    let itemMarketListing = getValue("itemMarketListing", 1);
+    let itemMarketClamp = getValue("itemMarketClamp", false);
+    let marketMarginOffset = getValue("marketMarginOffset", 0);
+    let marketMarginType = getValue("marketMarginType", "absolute");
+    let bazaarMarginOffset = getValue("bazaarMarginOffset", 0);
+    let bazaarMarginType = getValue("bazaarMarginType", "absolute");
+    let bazaarClamp = getValue("bazaarClamp", false);
+    let bazaarListing = getValue("bazaarListing", 1);
+    let clampMinIMEnabled = getValue("clampMinIMEnabled", false);
+    let clampMinIMPercent = getValue("clampMinIMPercent", 5);
+    let blackFridayMode = getValue("blackFridayMode", false);
+    let keepMinEnabled = getValue("keepMinEnabled", false);
+    let keepMinCount = getValue("keepMinCount", 1);
+    let lotEnabled = getValue("lotEnabled", false);
+    let lotSize = getValue("lotSize", 0);
+    let moneyLimitEnabled = getValue("moneyLimitEnabled", false);
+    let moneyLimitValue = getValue("moneyLimitValue", 0);
     const validPages = ["#/add", "#/manage"];
     let currentPage = window.location.hash;
     let itemMarketCache = {};
@@ -248,6 +201,7 @@
         }
     }
     async function fetchItemMarketData(itemId) {
+        debug(`Fetching Item Market data for item ID: ${itemId}`);
         if (!apiKey) {
             const error = new Error("No API key set for Item Market calls.");
             error.userMessage = "No API key set. Please set your Torn API key in Bazaar Filler Settings before continuing.";
@@ -255,9 +209,11 @@
         }
         const now = Date.now();
         if (itemMarketCache[itemId] && now - itemMarketCache[itemId].time < 30000) {
+            debug("Returning cached Item Market data.");
             return itemMarketCache[itemId].data;
         }
         const url = `https://api.torn.com/v2/market/${itemId}/itemmarket?comment=wBazaarFiller`;
+        debug("Fetching from URL:", url);
         const res = await fetch(url, {
             headers: { Authorization: "ApiKey " + apiKey },
         });
@@ -267,24 +223,31 @@
             error.userMessage = "Item Market API error: " + data.error.error;
             throw error;
         }
+        debug("Successfully fetched Item Market data, caching now.");
         itemMarketCache[itemId] = { time: now, data };
         return data;
     }
     async function fetchWeav3rItemData(itemId) {
+        debug(`Fetching weav3r.dev data for item ID: ${itemId}`);
         const now = Date.now();
         if (weav3rItemCache[itemId] && now - weav3rItemCache[itemId].time < 60000) {
+            debug("Returning cached weav3r.dev data.");
             return weav3rItemCache[itemId].data;
         }
         return new Promise((resolve, reject) => {
+            const url = `https://weav3r.dev/api/marketplace/${itemId}`;
+            debug("Fetching from URL:", url);
             GM_xmlhttpRequest({
                 method: "GET",
-                url: `https://weav3r.dev/api/marketplace/${itemId}`,
+                url: url,
                 onload: function (response) {
+                    debug("Successfully fetched weav3r.dev data, caching now.");
                     const data = JSON.parse(response.responseText);
                     weav3rItemCache[itemId] = { time: now, data };
                     resolve(data);
                 },
                 onerror: function (err) {
+                    debug("Error fetching weav3r.dev data:", err);
                     reject(new Error("Failed fetching weav3r.dev item data"));
                 },
             });
@@ -348,6 +311,15 @@
         });
     }
 
+    async function getLowestItemMarketPrice(itemId) {
+        if (!itemId) return null;
+        const data = await safeExecute(fetchItemMarketData, 'Fetch Item Market Data for Clamp')(itemId);
+        if (!data || !data.itemmarket || !Array.isArray(data.itemmarket.listings) || data.itemmarket.listings.length === 0) return null;
+        const prices = data.itemmarket.listings.map(l => Number(l.price)).filter(p => !isNaN(p) && isFinite(p));
+        if (prices.length === 0) return null;
+        return Math.min(...prices);
+    }
+
     async function calculatePrice(itemName, itemId, matchedItem) {
         if (!matchedItem) return null;
 
@@ -383,6 +355,14 @@
                 finalPrice = Math.max(finalPrice, matchedItem.market_value);
             }
 
+            if (clampMinIMEnabled) {
+                const lowest = await getLowestItemMarketPrice(itemId);
+                if (lowest !== null && !isNaN(Number(lowest))) {
+                    const minAllowed = Math.round(Number(lowest) * (1 - (clampMinIMPercent / 100)));
+                    finalPrice = Math.max(finalPrice, minAllowed);
+                }
+            }
+
             return {
                 price: finalPrice,
                 marketValue: matchedItem.market_value,
@@ -412,18 +392,65 @@
                 finalPrice = Math.max(finalPrice, matchedItem.market_value);
             }
 
+            if (clampMinIMEnabled && itemId) {
+                const lowest = await getLowestItemMarketPrice(itemId);
+                if (lowest !== null && !isNaN(Number(lowest))) {
+                    const minAllowed = Math.round(Number(lowest) * (1 - (clampMinIMPercent / 100)));
+                    finalPrice = Math.max(finalPrice, minAllowed);
+                }
+            }
+
             return { price: finalPrice, marketValue: matchedItem.market_value };
         }
 
         return null;
     }
 
+    function parseShortNumber(input) {
+        if (input === null || input === undefined) return NaN;
+        let s = String(input).trim().toLowerCase().replace(/,/g, "");
+        if (s === "") return NaN;
+        const suffix = s.slice(-1);
+        let multiplier = 1;
+        if (suffix === "k") { multiplier = 1e3; s = s.slice(0, -1); }
+        else if (suffix === "m") { multiplier = 1e6; s = s.slice(0, -1); }
+        else if (suffix === "b") { multiplier = 1e9; s = s.slice(0, -1); }
+        const num = Number(s);
+        if (isNaN(num)) return NaN;
+        return Math.floor(num * multiplier);
+    }
+
+    function calculateQuantityToSell(totalOwned, unitPrice) {
+        totalOwned = Math.max(0, parseInt(totalOwned || 0, 10) || 0);
+        const minKeep = (keepMinEnabled ? Math.max(0, parseInt(keepMinCount || 0, 10) || 0) : 0);
+        const maxByKeep = Math.max(totalOwned - minKeep, 0);
+
+        let maxByMoney = totalOwned;
+        if (moneyLimitEnabled && unitPrice && !isNaN(unitPrice) && Number(unitPrice) > 0) {
+            maxByMoney = Math.floor(moneyLimitValue / Number(unitPrice));
+            if (isNaN(maxByMoney) || !isFinite(maxByMoney)) maxByMoney = totalOwned;
+        }
+
+        let initialQty = Math.min(totalOwned, maxByKeep, maxByMoney);
+
+        let finalQty = initialQty;
+        if (lotEnabled && Number(lotSize) > 0) {
+            const cap = Math.max(0, parseInt(lotSize || 0, 10) || 0);
+            finalQty = Math.min(initialQty, cap);
+        }
+
+        finalQty = Math.max(0, Math.floor(finalQty || 0));
+        return finalQty;
+    }
+
     async function updateAddRow($row, isChecked) {
+        debug(`Updating 'Add' row. Checked: ${isChecked}`);
         const $qtyInput = $row.find(".amount input").first();
         const $priceInput = $row.find(".price input").first();
         const $choiceCheckbox = $row.find("div.amount.choice-container input");
 
         if (!isChecked) {
+            debug("Unchecking row, reverting values.");
             if ($choiceCheckbox.length && $choiceCheckbox.prop("checked")) {
                 $choiceCheckbox.click();
             }
@@ -451,13 +478,21 @@
         if (!$priceInput.data("orig"))
             $priceInput.data("orig", $priceInput.val());
 
+        const itemName = $row.find(".name-wrap span.t-overflow").text().trim();
+        const itemId = getItemIdByName(itemName);
+        const storedItems = JSON.parse(localStorage.getItem("tornItems") || "{}");
+        const matchedItem = Object.values(storedItems).find((i) => i.name === itemName);
+        const priceData = await calculatePrice(itemName, itemId, matchedItem);
+
         if ($choiceCheckbox.length) {
             if (!$choiceCheckbox.prop("checked")) {
                 $choiceCheckbox.click();
             }
         } else {
-            const qty = $row.find(".item-amount.qty").text().trim();
-            $qtyInput.val(qty);
+            const totalOwned = parseInt($row.find(".item-amount.qty").text().trim().replace(/,/g, ''), 10);
+            const unitPrice = priceData ? priceData.price : 0;
+            const quantityToSell = calculateQuantityToSell(totalOwned, unitPrice);
+            $qtyInput.val(quantityToSell);
             $qtyInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
         }
 
@@ -468,23 +503,14 @@
             return;
         }
 
-        const itemName = $row.find(".name-wrap span.t-overflow").text().trim();
-        const itemId = getItemIdByName(itemName);
-        const storedItems = JSON.parse(localStorage.getItem("tornItems") || "{}");
-        const matchedItem = Object.values(storedItems).find((i) => i.name === itemName);
-
-        const priceData = await calculatePrice(itemName, itemId, matchedItem);
         if (!priceData) return;
 
         if (priceData.listings) {
-            const $checkbox = $row.find(".checkbox-wrapper input.item-toggle").first();
-            const listingsText = priceData.listings
-                .map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} x${x.amount}`)
-                .join("\n");
-            $checkbox.attr("title", listingsText);
-            setTimeout(() => {
-                $checkbox.removeAttr("title");
-            }, 30000);
+            const $priceInputWrapper = $row.find(".price").first();
+            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
+                const listingsBtn = createListingsButton(priceData.listings);
+                $priceInputWrapper.append(listingsBtn);
+            }
         }
 
         $priceInput.val(priceData.price.toLocaleString("en-US"));
@@ -533,14 +559,11 @@
         if (!priceData) return;
 
         if (priceData.listings) {
-            const $checkbox = $row.find(".checkbox-wrapper input.item-toggle").first();
-            const listingsText = priceData.listings
-                .map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} x${x.amount}`)
-                .join("\n");
-            $checkbox.attr("title", listingsText);
-            setTimeout(() => {
-                $checkbox.removeAttr("title");
-            }, 30000);
+            const $priceInputWrapper = $row.find(".price___DoKP7").first();
+            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
+                const listingsBtn = createListingsButton(priceData.listings);
+                $priceInputWrapper.append(listingsBtn);
+            }
         }
 
         $priceInput.val(priceData.price.toLocaleString("en-US"));
@@ -589,6 +612,14 @@
         const priceData = await calculatePrice(itemName, itemId, matchedItem);
         if (!priceData) return;
 
+        if (priceData.listings) {
+            const $priceInputWrapper = $row.find("[class*=priceMobile___]").first();
+            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
+                const listingsBtn = createListingsButton(priceData.listings);
+                $priceInputWrapper.append(listingsBtn);
+            }
+        }
+
         $priceInput.val(priceData.price.toLocaleString("en-US"));
         $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
 
@@ -603,94 +634,135 @@
         const $modal = $(`
               <div class="settings-modal" style="width:400px; max-width:90%; font-family:Arial, sans-serif;">
                   <h2 style="margin-bottom:6px;">Bazaar Filler Settings</h2>
-                  <hr style="border-top:1px solid #ccc; margin:8px 0;">
-                  <div style="margin-bottom:15px;">
-                      <label for="api-key-input" style="font-weight:bold; display:block;">Torn API Key</label>
-                      <div style="display:flex; align-items:center; gap:8px;">
-                          <input id="api-key-input" type="text" placeholder="Enter API key" style="flex:1; padding:6px; box-sizing:border-box;" value="${apiKey || ''}">
-                          <button id="refresh-market-values" style="padding:6px; cursor:pointer; background:none; border:none;" title="Refresh Market Values">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                  <path d="M23 4v6h-6"></path>
-                                  <path d="M1 20v-6h6"></path>
-                                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-                              </svg>
-                          </button>
-                      </div>
+
+                  <div style="margin-bottom:8px;">
+                      <label style="font-weight:bold; display:block; margin-bottom:6px;">Torn API Key</label>
+                      <input id="api-key-input" type="text" placeholder="Enter API key" style="width:100%;padding:6px" value="${apiKey || ''}">
                   </div>
-                  <hr style="border-top:1px solid #ccc; margin:8px 0;">
-                  <div style="margin-bottom:15px;">
-                      <label for="pricing-source-select" style="font-weight:bold; display:block;">Pricing Source</label>
-                      <select id="pricing-source-select" style="width:100%; padding:6px; box-sizing:border-box;">
+
+                  <div class="settings-row">
+                      <div class="label">Pricing Source</div>
+                      <select id="pricing-source-select" class="compact-select compact-input">
                           <option value="Market Value">Market Value</option>
                           <option value="Bazaars/weav3r.dev">Bazaars/weav3r.dev</option>
                           <option value="Item Market">Item Market</option>
                       </select>
+                      <span class="bf-help-placeholder-pricing"></span>
                   </div>
-                  <div id="market-value-options" style="display:none; margin-bottom:15px;">
-                      <hr style="border-top:1px solid #ccc; margin:8px 0;">
-                      <h3 style="margin:0 0 10px 0; font-size:1em; font-weight:bold;">Market Value Options</h3>
-                      <div style="margin-bottom:10px;">
-                          <label for="market-margin-offset" style="display:block;">Margin (ie: -1 is either $1 less or 1% less depending on margin type)</label>
-                          <input id="market-margin-offset" type="number" style="width:100%; padding:6px; box-sizing:border-box;" value="${marketMarginOffset}">
-                      </div>
-                      <div style="margin-bottom:10px;">
-                          <label for="market-margin-type" style="display:block;">Margin Type</label>
-                          <select id="market-margin-type" style="width:100%; padding:6px; box-sizing:border-box;">
+
+                  <div id="market-value-options">
+                      <div class="settings-row">
+                          <div class="label">Margin</div>
+                          <input id="market-margin-offset" type="number" class="compact-number compact-input" value="${marketMarginOffset}">
+                          <select id="market-margin-type" class="compact-select compact-input" style="width:110px">
                               <option value="absolute">Absolute ($)</option>
                               <option value="percentage">Percentage (%)</option>
                           </select>
+                          <span class="bf-help-placeholder-margin"></span>
                       </div>
                   </div>
-                  <div id="item-market-options" style="display:none; margin-bottom:15px;">
-                      <hr style="border-top:1px solid #ccc; margin:8px 0;">
-                      <h3 style="margin:0 0 10px 0; font-size:1em; font-weight:bold;">Item Market Options</h3>
-                      <div style="margin-bottom:10px;">
-                          <label for="item-market-listing" style="display:block;">Listing Index (1 = lowest, 2 = 2nd lowest, etc)</label>
-                          <input id="item-market-listing" type="number" style="width:100%; padding:6px; box-sizing:border-box;" value="${itemMarketListing}">
+
+                  <div id="item-market-options">
+                      <div class="settings-row">
+                          <div class="label">Listing Index</div>
+                          <input id="item-market-listing" type="number" class="compact-number compact-input" value="${itemMarketListing}">
+                          <span class="bf-help-placeholder-listing"></span>
+                          <div style="flex:1"></div>
                       </div>
-                      <div style="margin-bottom:10px;">
-                          <label for="item-market-offset" style="display:block;">Margin (ie: -1 is either $1 less or 1% less depending on margin type)</label>
-                          <input id="item-market-offset" type="number" style="width:100%; padding:6px; box-sizing:border-box;" value="${itemMarketOffset}">
-                      </div>
-                      <div style="margin-bottom:10px;">
-                          <label for="item-market-margin-type" style="display:block;">Margin Type</label>
-                          <select id="item-market-margin-type" style="width:100%; padding:6px; box-sizing:border-box;">
+                      <div class="settings-row">
+                          <div class="label">Margin</div>
+                          <input id="item-market-offset" type="number" class="compact-number compact-input" value="${itemMarketOffset}">
+                          <select id="item-market-margin-type" class="compact-select compact-input" style="width:110px">
                               <option value="absolute">Absolute ($)</option>
                               <option value="percentage">Percentage (%)</option>
                           </select>
-                      </div>
-                      <div style="display:inline-flex; align-items:center; margin-bottom:5px;">
-                          <input id="item-market-clamp" type="checkbox" style="margin-right:5px;" ${itemMarketClamp ? "checked" : ""}>
-                          <label for="item-market-clamp" style="margin:0; cursor:pointer;">Clamp minimum price to Market Value</label>
+                          <span class="bf-help-placeholder-margin"></span>
                       </div>
                   </div>
-                  <div id="weav3r-options" style="display:none; margin-bottom:15px;">
-                      <hr style="border-top:1px solid #ccc; margin:8px 0;">
-                      <h3 style="margin:0 0 10px 0; font-size:1em; font-weight:bold;">weav3r.dev Options</h3>
-                      <div style="margin-bottom:10px;">
-                          <label for="weav3r-listing" style="display:block;">Listing Index (1 = lowest, 2 = 2nd lowest, etc)</label>
-                          <input id="weav3r-listing" type="number" style="width:100%; padding:6px; box-sizing:border-box;" value="${bazaarListing || 1}">
+
+                  <div id="weav3r-options">
+                      <div class="settings-row">
+                          <div class="label">Listing Index</div>
+                          <input id="weav3r-listing" type="number" class="compact-number compact-input" value="${bazaarListing}">
+                          <span class="bf-help-placeholder-listing"></span>
                       </div>
-                      <div style="margin-bottom:10px;">
-                          <label for="weav3r-margin-offset" style="display:block;">Margin (e.g., -1 for $1 less or 1% less)</label>
-                          <input id="weav3r-margin-offset" type="number" style="width:100%; padding:6px; box-sizing:border-box;" value="${bazaarMarginOffset}">
-                      </div>
-                      <div style="margin-bottom:10px;">
-                          <label for="weav3r-margin-type" style="display:block;">Margin Type</label>
-                          <select id="weav3r-margin-type" style="width:100%; padding:6px; box-sizing:border-box;">
+                      <div class="settings-row">
+                          <div class="label">Margin</div>
+                          <input id="weav3r-margin-offset" type="number" class="compact-number compact-input" value="${bazaarMarginOffset}">
+                          <select id="weav3r-margin-type" class="compact-select compact-input" style="width:110px">
                               <option value="absolute">Absolute ($)</option>
                               <option value="percentage">Percentage (%)</option>
                           </select>
-                      </div>
-                      <div style="display:inline-flex; align-items:center; margin-bottom:5px;">
-                          <input id="weav3r-clamp" type="checkbox" style="margin-right:5px;" ${bazaarClamp ? "checked" : ""}>
-                          <label for="weav3r-clamp" style="margin:0; cursor:pointer;">Clamp minimum price to Market Value</label>
+                          <span class="bf-help-placeholder-margin"></span>
                       </div>
                   </div>
+
                   <hr style="border-top:1px solid #ccc; margin:8px 0;">
-                  <div style="text-align:right;">
-                      <button id="settings-save" style="margin-right:8px; padding:6px 10px; cursor:pointer;">Save</button>
-                      <button id="settings-cancel" style="padding:6px 10px; cursor:pointer;">Cancel</button>
+                  <div style="font-weight:bold;margin-bottom:6px">Clamping Options</div>
+
+                  <div id="clamp-to-mv-im" class="settings-row" style="align-items:flex-start;">
+                      <div style="min-width:120px"><input id="item-market-clamp" type="checkbox" ${itemMarketClamp ? "checked":""}></div>
+                      <div style="flex:1;display:flex;align-items:center;gap:8px">
+                          <div>Clamp minimum price to Market Value</div>
+                          <span class="bf-help-placeholder"></span>
+                      </div>
+                  </div>
+                  <div id="clamp-to-mv-weav3r" class="settings-row" style="align-items:flex-start;">
+                      <div style="min-width:120px"><input id="weav3r-clamp" type="checkbox" ${bazaarClamp ? "checked":""}></div>
+                      <div style="flex:1;display:flex;align-items:center;gap:8px">
+                          <div>Clamp minimum price to Market Value</div>
+                          <span class="bf-help-placeholder"></span>
+                      </div>
+                  </div>
+                  <div id="clamp-to-im-percent" class="settings-row" style="align-items:center;">
+                      <div style="min-width:120px"><input id="im-clamp-enabled" type="checkbox" ${clampMinIMEnabled ? "checked":""}></div>
+                      <div style="flex:1;display:flex;align-items:center;gap:8px">
+                          <div>Clamp to Item Market minus</div>
+                          <input id="im-clamp-percent" type="number" class="compact-number-sm compact-input" value="${clampMinIMPercent}">
+                          <div>%</div>
+                          <span class="bf-help-placeholder2"></span>
+                      </div>
+                  </div>
+
+                  <hr style="border-top:1px solid #ccc; margin:8px 0;">
+
+                  <div style="display:flex; align-items:center; gap:8px; font-weight:bold; margin-bottom:6px">
+                      <span>Quantity Handling</span>
+                      <span class="bf-help-placeholder-quantity"></span>
+                  </div>
+
+                  <div class="settings-row" style="align-items:center;">
+                      <div style="min-width:120px"><input id="keep-min-enabled" type="checkbox" ${keepMinEnabled ? "checked":""}></div>
+                      <div style="flex:1;display:flex;align-items:center;gap:8px">
+                          <div>Always keep at least</div>
+                          <input id="keep-min-count" type="number" class="compact-number compact-input" value="${keepMinCount}">
+                          <div>items</div>
+                          <span class="bf-help-placeholder3"></span>
+                      </div>
+                  </div>
+
+                  <div class="settings-row" style="align-items:center;">
+                      <div style="min-width:120px"><input id="lot-enabled" type="checkbox" ${lotEnabled ? "checked":""}></div>
+                      <div style="flex:1;display:flex;align-items:center;gap:8px">
+                          <div>Max items to list (lot cap)</div>
+                          <input id="lot-size" type="number" class="compact-number compact-input" value="${lotSize}">
+                          <div>items</div>
+                          <span class="bf-help-placeholder4"></span>
+                      </div>
+                  </div>
+
+                  <div class="settings-row" style="align-items:center;">
+                      <div style="min-width:120px"><input id="money-limit-enabled" type="checkbox" ${moneyLimitEnabled ? "checked":""}></div>
+                      <div style="flex:1;display:flex;align-items:center;gap:8px">
+                          <div>Limit total value for this item to</div>
+                          <input id="money-limit-value" type="text" class="compact-number compact-input" style="width:120px" placeholder="e.g. 5m, 200k" value="${(moneyLimitValue ? moneyLimitValue : '')}">
+                          <span class="bf-help-placeholder5"></span>
+                      </div>
+                  </div>
+
+                  <div style="text-align:right;margin-top:10px">
+                    <button id="settings-save" style="padding:6px 10px;margin-right:8px">Save</button>
+                    <button id="settings-cancel" style="padding:6px 10px">Cancel</button>
                   </div>
               </div>
           `);
@@ -700,104 +772,150 @@
         $("#item-market-margin-type").val(itemMarketMarginType);
         $("#market-margin-type").val(marketMarginType);
         $("#weav3r-margin-type").val(bazaarMarginType);
+
         function toggleFields() {
             const src = $("#pricing-source-select").val();
             $("#market-value-options").toggle(src === "Market Value");
             $("#item-market-options").toggle(src === "Item Market");
             $("#weav3r-options").toggle(src === "Bazaars/weav3r.dev");
+            $("#clamp-to-mv-im").toggle(src === "Item Market");
+            $("#clamp-to-mv-weav3r").toggle(src === "Bazaars/weav3r.dev");
+            $("#clamp-to-im-percent").toggle(src === "Item Market" || src === "Bazaars/weav3r.dev");
         }
         $("#pricing-source-select").change(toggleFields);
         toggleFields();
+
+        const phPricing = $overlay.find(".bf-help-placeholder-pricing");
+        phPricing.each(function(){
+            const text = "Select the source for the base price of your items.\n\n- Market Value: Uses Torn's official Market Value. This is a good general-purpose option, but may not always reflect the most current market prices.\n\n- Item Market: Uses the prices from the official Item Market. This is generally more up-to-date than Market Value, but is subject to market manipulation and may not be the best option for all items.\n\n- Bazaars/weav3r.dev: Uses data from weav3r.dev, which aggregates prices from multiple players' bazaars.";
+            $(this).replaceWith(createTooltipElement(text));
+        });
+
+        const phListing = $overlay.find(".bf-help-placeholder-listing");
+        phListing.each(function(){
+            const text = "This sets which market listing to base your price on. Use positive numbers: 1 for the cheapest, 2 for the second cheapest, and so on. For example, setting this to 2 and your margin to -$1 will price your item $1 below the second cheapest on the market. The default is 1.";
+            $(this).replaceWith(createTooltipElement(text));
+        });
+
+        const phMargin = $overlay.find(".bf-help-placeholder-margin");
+        phMargin.each(function(){
+            const text = "Set a margin to adjust the calculated price.\n\n- Absolute ($): Adjusts the price by a fixed amount. A value of -1 will set your price $1 below the calculated price.\n\n- Percentage (%): Adjusts the price by a percentage of the calculated price. A value of -1 will set your price 1% below the calculated price.\n\nExample (Absolute): If the calculated price is $1,000 and you set a margin of -1, your price will be $999.\n\nExample (Percentage): If the calculated price is $1,000 and you set a margin of -1, your price will be $990.";
+            $(this).replaceWith(createTooltipElement(text));
+        });
+
+        const ph1 = $overlay.find(".bf-help-placeholder");
+        ph1.each(function(){ $(this).replaceWith(createTooltipElement("When checked, this option ensures that your item's price will not be set below its Market Value, even if the calculated price (based on your other settings) is lower.")); });
+        const ph2 = $overlay.find(".bf-help-placeholder2");
+        ph2.each(function(){ $(this).replaceWith(createTooltipElement("When checked, this option ensures that your item's price will not be set below a certain percentage of the cheapest item on the market. This is useful for making sure your items are always competitively priced, while still accounting for the 5% fee that is charged when selling on the Item Market.\n\nExample: If the cheapest item on the market is $1,000 and you set the percentage to 5%, your price will not be set below $950.")); });
+        const ph3 = $overlay.find(".bf-help-placeholder3");
+        ph3.each(function(){ $(this).replaceWith(createTooltipElement("When checked, this option will ensure that you always keep a certain number of items in your inventory. This is useful for items that you use frequently, or for items that you want to keep in stock for your bazaar.\n\nExample: If you have 100 of a plushie and you set this value to 10, the script will only list 90 of them for sale.")); });
+        const ph4 = $overlay.find(".bf-help-placeholder4");
+        ph4.each(function(){ $(this).replaceWith(createTooltipElement("When checked, this option will limit the number of items that are listed for sale. This is a maximum cap, not a multiple.\n\nExample: If you have 100 of a plushie and you set this value to 50, the script will only list 50 of them for sale.")); });
+        const ph5 = $overlay.find(".bf-help-placeholder5");
+        ph5.each(function(){ $(this).replaceWith(createTooltipElement("When checked, this option will limit the total value of the items that are listed for sale. This is useful for managing your bazaar's total value.\n\nExample: If you have 100 of a plushie and you set this value to 500,000, and the calculated price per plushie is $10,000, the script will only list 50 of them for sale (50 * $10,000 = $500,000).")); });
+
+        const phQuantity = $overlay.find(".bf-help-placeholder-quantity");
+        phQuantity.each(function(){
+            const text = "This option helps you control how many of each item you list. Here's how they work together:\n1. First, the script checks the \"Always keep at least\" setting. If you have 100 plushies and want to keep 10, it will only consider listing 90.\n2. Next, it calculates the price and checks the \"Limit total value\" setting. If your 90 plushies are priced at $10,000 each and you set a limit of $500,000, it will only list 50 ($500,000 / $10,000).\n3. Finally, it applies the \"Max items to list (lot cap).\" If you set a lot cap of 25, it will reduce the quantity from 50 to 25.\nThe script always lists the lowest quantity calculated from these rules.";
+            $(this).replaceWith(createTooltipElement(text));
+        });
+
+        function createTooltipElement(text) {
+            const btn = document.createElement('div'); btn.className = 'bf-help-btn'; btn.textContent = 'i'; btn.dataset.tip = text;
+            btn.addEventListener('click', (e) => { e.stopPropagation(); if ('ontouchstart' in window || window.innerWidth < 720) showCenterModalTip(text); else showBubble(btn.getBoundingClientRect(), text); });
+            btn.addEventListener('mouseenter', () => { if (!('ontouchstart' in window) && window.innerWidth >= 720) showBubble(btn.getBoundingClientRect(), text); });
+            btn.addEventListener('mouseleave', () => { if (!('ontouchstart' in window) && window.innerWidth >= 720) hideBubble(); });
+            return btn;
+        }
+
+    function createListingsButton(listings) {
+        const listingsText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} x${x.amount}`).join("\n");
+        const btn = document.createElement('div');
+        btn.className = 'bf-listings-btn';
+        btn.textContent = 'i';
+        btn.dataset.tip = listingsText;
+
+        const showModal = (e) => {
+            e.stopPropagation();
+            const formattedText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} (x${x.amount.toLocaleString("en-US")})`).join("<br>");
+            showCenterModalTip(formattedText, "Cheapest Market Listings");
+        };
+
+        const showTip = () => {
+            if (!('ontouchstart' in window) && window.innerWidth >= 720) {
+                showBubble(btn.getBoundingClientRect(), listingsText);
+            }
+        };
+
+        const hideTip = () => {
+            if (!('ontouchstart' in window) && window.innerWidth >= 720) {
+                hideBubble();
+            }
+        };
+
+        btn.addEventListener('click', showModal);
+        btn.addEventListener('mouseenter', showTip);
+        btn.addEventListener('mouseleave', hideTip);
+
+        return btn;
+    }
+
         $("#settings-save").click(function () {
             var _a;
-            const oldPricingSource = pricingSource;
             apiKey = ((_a = $("#api-key-input").val()) === null || _a === void 0 ? void 0 : _a.trim()) || "";
             pricingSource = $("#pricing-source-select").val();
-            if (oldPricingSource !== pricingSource) {
-                itemMarketCache = {};
-                weav3rItemCache = {};
-            }
-            if (pricingSource === "Bazaars/weav3r.dev") {
-                bazaarMarginOffset = Number($("#weav3r-margin-offset").val() || 0);
-                bazaarMarginType = $("#weav3r-margin-type").val();
-                bazaarClamp = $("#weav3r-clamp").is(":checked");
-                bazaarListing = Number($("#weav3r-listing").val() || 1);
+            
+            marketMarginOffset = Number($("#market-margin-offset").val() || 0);
+            marketMarginType = $("#market-margin-type").val();
+            
+            itemMarketListing = Math.max(1, Number($("#item-market-listing").val() || 1));
+            itemMarketOffset = Number($("#item-market-offset").val() || -1);
+            itemMarketMarginType = $("#item-market-margin-type").val();
+            itemMarketClamp = $("#item-market-clamp").is(":checked");
+            
+            bazaarMarginOffset = Number($("#weav3r-margin-offset").val() || 0);
+            bazaarMarginType = $("#weav3r-margin-type").val();
+            bazaarClamp = $("#weav3r-clamp").is(":checked");
+            bazaarListing = Math.max(1, Number($("#weav3r-listing").val() || 1));
 
-                GM_setValue("bazaarMarginOffset", bazaarMarginOffset);
-                GM_setValue("bazaarMarginType", bazaarMarginType);
-                GM_setValue("bazaarClamp", bazaarClamp);
-                GM_setValue("bazaarListing", bazaarListing);
-            }
-            if (pricingSource === "Market Value") {
-                marketMarginOffset = Number($("#market-margin-offset").val() || 0);
-                marketMarginType = $("#market-margin-type").val();
-                GM_setValue("marketMarginOffset", marketMarginOffset);
-                GM_setValue("marketMarginType", marketMarginType);
-            }
-            if (pricingSource === "Item Market") {
-                itemMarketListing = Number($("#item-market-listing").val() || 1);
-                itemMarketOffset = Number($("#item-market-offset").val() || -1);
-                itemMarketMarginType = $("#item-market-margin-type").val();
-                itemMarketClamp = $("#item-market-clamp").is(":checked");
-                GM_setValue("itemMarketListing", itemMarketListing);
-                GM_setValue("itemMarketOffset", itemMarketOffset);
-                GM_setValue("itemMarketMarginType", itemMarketMarginType);
-                GM_setValue("itemMarketClamp", itemMarketClamp);
-            }
-            GM_setValue("tornApiKey", apiKey);
-            GM_setValue("pricingSource", pricingSource);
+            keepMinEnabled = $("#keep-min-enabled").is(":checked");
+            keepMinCount = Number($("#keep-min-count").val() || 0) || 0;
+            lotEnabled = $("#lot-enabled").is(":checked");
+            lotSize = Number($("#lot-size").val() || 0) || 0;
+            moneyLimitEnabled = $("#money-limit-enabled").is(":checked");
+            const rawMoneyText = ($("#money-limit-value").val() || "").toString().trim();
+            if (moneyLimitEnabled && rawMoneyText) {
+                const parsed = parseShortNumber(rawMoneyText);
+                moneyLimitValue = isNaN(parsed) ? 0 : parsed;
+            } else { moneyLimitValue = 0; }
+
+            clampMinIMEnabled = $("#im-clamp-enabled").is(":checked");
+            clampMinIMPercent = Number($("#im-clamp-percent").val() || 0) || 0;
+            
+            setValue("tornApiKey", apiKey);
+            setValue("pricingSource", pricingSource);
+            setValue("marketMarginOffset", marketMarginOffset);
+            setValue("marketMarginType", marketMarginType);
+            setValue("itemMarketListing", itemMarketListing);
+            setValue("itemMarketOffset", itemMarketOffset);
+            setValue("itemMarketMarginType", itemMarketMarginType);
+            setValue("itemMarketClamp", itemMarketClamp);
+            setValue("bazaarMarginOffset", bazaarMarginOffset);
+            setValue("bazaarMarginType", bazaarMarginType);
+            setValue("bazaarClamp", bazaarClamp);
+            setValue("bazaarListing", bazaarListing);
+            setValue("keepMinEnabled", keepMinEnabled);
+            setValue("keepMinCount", keepMinCount);
+            setValue("lotEnabled", lotEnabled);
+            setValue("lotSize", lotSize);
+            setValue("moneyLimitEnabled", moneyLimitEnabled);
+            setValue("moneyLimitValue", moneyLimitValue);
+            setValue("clampMinIMEnabled", clampMinIMEnabled);
+            setValue("clampMinIMPercent", clampMinIMPercent);
+
             $overlay.remove();
         });
         $("#settings-cancel").click(() => $overlay.remove());
-
-        $("#refresh-market-values").click(safeExecute(async function() {
-            const $button = $(this);
-            const $svg = $button.find("svg");
-            const currentApiKey = $("#api-key-input").val().trim() || apiKey;
-
-            if (!currentApiKey) {
-                const error = new Error("No API key");
-                error.userMessage = "Please enter a valid API key first.";
-                throw error;
-            }
-
-            $button.prop("disabled", true);
-            $svg.css("animation", "spin 1s linear infinite");
-
-            try {
-                const response = await fetch(`https://api.torn.com/torn/?key=${currentApiKey}&selections=items&comment=wBazaarFiller`);
-                const data = await response.json();
-
-                if (!data.items) {
-                    throw new Error(data.error?.error || "Failed to fetch market values");
-                }
-
-                const filtered = {};
-                for (const [id, item] of Object.entries(data.items)) {
-                    if (item.tradeable) {
-                        filtered[id] = {
-                            name: item.name,
-                            market_value: item.market_value,
-                        };
-                    }
-                }
-
-                localStorage.setItem("tornItems", JSON.stringify(filtered));
-                GM_setValue("lastUpdatedTime", Date.now());
-
-                const $successMsg = $('<div style="color: #28a745; margin-top: 5px;">Market values refreshed successfully!</div>');
-                $button.after($successMsg);
-                setTimeout(() => $successMsg.remove(), 3000);
-            } catch (error) {
-                const $errorMsg = $('<div style="color: #dc3545; margin-top: 5px;">Error: ' + error.message + '</div>');
-                $button.after($errorMsg);
-                setTimeout(() => $errorMsg.remove(), 3000);
-                throw error;
-            } finally {
-                $button.prop("disabled", false);
-                $svg.css("animation", "");
-            }
-        }, 'Refresh Market Values'));
     }
     function addPricingSourceLink() {
         if (document.getElementById("pricing-source-button"))
@@ -873,7 +991,7 @@
         link.addEventListener("click", function (e) {
             e.preventDefault();
             blackFridayMode = !blackFridayMode;
-            GM_setValue("blackFridayMode", blackFridayMode);
+            setValue("blackFridayMode", blackFridayMode);
             textSpan.textContent = blackFridayMode ? "Black Friday: ON" : "Black Friday: OFF";
             const svg = this.querySelector(".black-friday-icon");
             if (svg) {
@@ -902,7 +1020,7 @@
             class: "item-toggle",
             click: safeExecute(async function (e) {
                 e.stopPropagation();
-                if (!GM_getValue("tornApiKey", "")) {
+                if (!getValue("tornApiKey", "")) {
                     const error = new Error("No API key set");
                     error.userMessage = "No Torn API key set. Please click the 'Bazaar Filler Settings' button to enter your API key.";
                     $(this).prop("checked", false);
@@ -947,7 +1065,7 @@
 
                 $selectAllBtn.on("click", safeExecute(async function(e) {
                     e.preventDefault();
-                    if (!GM_getValue("tornApiKey", "")) {
+                    if (!getValue("tornApiKey", "")) {
                         const error = new Error("No API key set");
                         error.userMessage = "No Torn API key set. Please click the 'Bazaar Filler Settings' button to enter your API key.";
                         openSettingsModal();
@@ -993,26 +1111,17 @@
             const wrapper = $('<div class="checkbox-wrapper"></div>');
             const checkbox = createItemToggleCheckbox(async function(e) {
                 const $row = $(this).closest(".item___jLJcf");
-                if ($row.length === 0) {
-                    const $correctRow = $(this).closest(".item___jLJcf");
-                    if ($correctRow.length > 0) {
-                        if (window.innerWidth <= 784) {
-                            const $manageBtn = $correctRow.find('button[aria-label="Manage"]').first();
-                            if ($manageBtn.length) {
-                                if (!$manageBtn.find("span").hasClass("active___OTFsm")) {
-                                    $manageBtn.click();
-                                }
-                                setTimeout(async () => {
-                                    await updateManageRowMobile($correctRow, this.checked);
-                                }, 200);
-                                return;
-                            }
+                if (window.innerWidth <= 784) {
+                    const $manageBtn = $row.find('button[aria-label="Manage"]').first();
+                    if ($manageBtn.length) {
+                        if (!$manageBtn.find("span").hasClass("active___OTFsm")) {
+                            $manageBtn.click();
                         }
-                        await updateManageRow($correctRow, this.checked);
+                        setTimeout(async () => {
+                            await updateManageRowMobile($row, this.checked);
+                        }, 200);
                         return;
                     }
-                    console.warn("Row not found with either selector");
-                    return;
                 }
                 await updateManageRow($row, this.checked);
             }, 'Manage Page Checkbox Click');
@@ -1022,7 +1131,7 @@
     }
 
     const storedItems = localStorage.getItem("tornItems");
-    const lastUpdatedTime = GM_getValue("lastUpdatedTime", 0);
+    const lastUpdatedTime = getValue("lastUpdatedTime", 0);
     const now = Date.now();
     const oneDayMs = 24 * 60 * 60 * 1000;
     const lastUpdatedDate = new Date(lastUpdatedTime);
@@ -1049,15 +1158,17 @@
             }
 
             localStorage.setItem("tornItems", JSON.stringify(filtered));
-            GM_setValue("lastUpdatedTime", now);
+            setValue("lastUpdatedTime", now);
         }, 'Initial Item Fetch')();
     }
     let observerTimeout;
     const domObserver = new MutationObserver((mutations) => {
         clearTimeout(observerTimeout);
         observerTimeout = setTimeout(() => {
+            debug("DOM changed, running UI updates.");
             safeExecute(() => {
                 const hash = window.location.hash;
+                debug(`Current page hash: ${hash}`);
                 if (hash === "#/add") {
                     addAddPageCheckboxes();
                 }
@@ -1078,6 +1189,7 @@
     });
 
     const initializeUI = safeExecute(() => {
+        debug("Initializing UI...");
         const hash = window.location.hash;
         if (hash === "#/add") {
             addAddPageCheckboxes();
@@ -1089,8 +1201,12 @@
         attachPriceFieldObservers();
     }, 'Initialize UI');
 
-    window.addEventListener('load', () => setTimeout(initializeUI, 100));
+    window.addEventListener('load', () => {
+        debug("Window loaded, initializing UI.");
+        setTimeout(initializeUI, 100);
+    });
     window.addEventListener("hashchange", () => {
+        debug("Hash changed, re-initializing UI.");
         currentPage = window.location.hash;
         setTimeout(initializeUI, 100);
     });
@@ -1115,4 +1231,43 @@
         itemMarketCache = {};
         weav3rItemCache = {};
     });
+
+    let bubbleEl = null;
+    function showBubble(anchorRect, text) {
+        hideBubble();
+        bubbleEl = document.createElement('div');
+        bubbleEl.className = 'tooltip-bubble';
+        bubbleEl.textContent = text;
+        document.body.appendChild(bubbleEl);
+        const padding = 8;
+        const bw = bubbleEl.offsetWidth;
+        const bh = bubbleEl.offsetHeight;
+        let left = Math.max(padding, anchorRect.left + window.scrollX - Math.floor(bw/4));
+        if (left + bw > window.innerWidth - padding) left = window.innerWidth - bw - padding;
+        let top = anchorRect.top + window.scrollY - bh - 10;
+        if (top < padding) top = anchorRect.bottom + window.scrollY + 10;
+        bubbleEl.style.left = left + 'px';
+        bubbleEl.style.top = top + 'px';
+        setTimeout(()=>{ document.addEventListener('click', onDocClickForBubble); }, 10);
+    }
+    function hideBubble() {
+        if (bubbleEl && bubbleEl.parentNode) { bubbleEl.parentNode.removeChild(bubbleEl); bubbleEl = null; document.removeEventListener('click', onDocClickForBubble); }
+    }
+    function onDocClickForBubble(e) { if (bubbleEl && !bubbleEl.contains(e.target)) hideBubble(); }
+    function showCenterModalTip(text, title = "Info") {
+        let modal = document.getElementById('bf-center-tip');
+        if (!modal) {
+            modal = document.createElement('div'); modal.id = 'bf-center-tip';
+            modal.className = 'settings-modal'; modal.style.maxWidth = '420px'; modal.style.width = Math.min(560, window.innerWidth - 40) + 'px';
+            modal.style.position = 'fixed'; modal.style.left = '50%'; modal.style.top = '50%'; modal.style.transform = 'translate(-50%,-50%)'; modal.style.zIndex = 200000;
+            modal.innerHTML = `<div class="bf-tip-title" style="font-weight:700;margin-bottom:6px"></div><div class="bf-tip-content" style="line-height:1.4"></div><div style="text-align:right;margin-top:10px"><button id="bf-close-tip" style="padding:6px 8px">OK</button></div>`;
+            document.body.appendChild(modal);
+            document.getElementById('bf-close-tip').addEventListener('click', ()=> { modal.style.display='none'; });
+        }
+        modal.querySelector('.bf-tip-title').textContent = title;
+        modal.querySelector('.bf-tip-content').innerHTML = text.replace(/\n/g, '<br>');
+        modal.style.display = 'block';
+    }
+
+    document.addEventListener('click', (e) => { if (bubbleEl && !bubbleEl.contains(e.target)) hideBubble(); });
 })();
