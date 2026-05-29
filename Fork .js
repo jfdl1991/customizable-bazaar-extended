@@ -67,12 +67,12 @@
   body:not(.dark-mode) .item-toggle{ border-color:#666; background:rgba(0,0,0,0.04); color:#0a7; }
   body:not(.dark-mode) .item-toggle:checked{ background:rgba(0,180,0,0.12); }
 
-  .item-toggle-red { border-color: #ff4444 !important; }
+  .item-toggle-red { border-color: #ff4444 !important; box-shadow: 0 0 5px rgba(255, 68, 68, 0.5) !important; }
   .item-toggle-red:checked::after { color: #ff4444 !important; }
-  body.dark-mode .item-toggle-red:checked { background: rgba(255, 68, 68, 0.2) !important; }
-  body:not(.dark-mode) .item-toggle-red:checked { background: rgba(255, 0, 0, 0.1) !important; }
+  body.dark-mode .item-toggle-red:checked { background: rgba(255, 68, 68, 0.3) !important; }
+  body:not(.dark-mode) .item-toggle-red:checked { background: rgba(255, 0, 0, 0.15) !important; }
 
-  .city-warning { color: #ff4444; font-size: 12px; margin-top: 4px; display: block; width: 100%; font-weight: bold; }
+  .city-warning { color: #ff4444; font-size: 12px; margin: 4px 0; display: block; width: 100%; font-weight: bold; cursor: pointer; text-decoration: underline dotted; }
 
   .checkbox-wrapper{position:absolute;top:50%;right:8px;width:34px;height:34px;transform:translateY(-50%);cursor:pointer;z-index:5}
   .checkbox-wrapper input.item-toggle{position:absolute;left:6px;top:6px}
@@ -509,10 +509,13 @@
         $row.find(".city-warning").remove();
         $toggle.removeClass("item-toggle-red");
 
-        if (lockCityBetter && matchedItem.buy_price && priceData && Number(matchedItem.buy_price) > priceData.price) {
+        if (lockCityBetter && matchedItem.city_price && priceData && Number(matchedItem.city_price) > priceData.price) {
             quantityToSell = 0;
             $toggle.addClass("item-toggle-red");
-            $row.append(`<div class="city-warning">You would get more money selling this item in the city shop ($${Number(matchedItem.buy_price).toLocaleString()})</div>`);
+            const warningMsg = `You would get more money selling this item in the city shop ($${Number(matchedItem.city_price).toLocaleString()}) than in your bazaar ($${priceData.price.toLocaleString()}).`;
+            const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
+            $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
+            $row.append($warn);
         }
 
         if (quantityToSell !== undefined) {
@@ -596,13 +599,16 @@
         $row.find(".city-warning").remove();
         $toggle.removeClass("item-toggle-red");
 
-        if (lockCityBetter && matchedItem.buy_price && Number(matchedItem.buy_price) > priceData.price) {
+        if (lockCityBetter && matchedItem.city_price && Number(matchedItem.city_price) > priceData.price) {
             if ($qtyInput.length) {
                 $qtyInput.val("0");
                 $qtyInput[0].dispatchEvent(new Event("input", { bubbles: true }));
             }
             $toggle.addClass("item-toggle-red");
-            $row.append(`<div class="city-warning">You would get more money selling this item in the city shop ($${Number(matchedItem.buy_price).toLocaleString()})</div>`);
+            const warningMsg = `You would get more money selling this item in the city shop ($${Number(matchedItem.city_price).toLocaleString()}) than in your bazaar ($${priceData.price.toLocaleString()}).`;
+            const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
+            $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
+            $row.append($warn);
         }
 
         if (priceData.listings) {
@@ -673,13 +679,16 @@
         $row.find(".city-warning").remove();
         $toggle.removeClass("item-toggle-red");
 
-        if (lockCityBetter && matchedItem.buy_price && Number(matchedItem.buy_price) > priceData.price) {
+        if (lockCityBetter && matchedItem.city_price && Number(matchedItem.city_price) > priceData.price) {
             if ($qtyInput.length) {
                 $qtyInput.val("0");
                 $qtyInput[0].dispatchEvent(new Event("input", { bubbles: true }));
             }
             $toggle.addClass("item-toggle-red");
-            $row.append(`<div class="city-warning">You would get more money selling this item in the city shop ($${Number(matchedItem.buy_price).toLocaleString()})</div>`);
+            const warningMsg = `You would get more money selling this item in the city shop ($${Number(matchedItem.city_price).toLocaleString()}) than in your bazaar ($${priceData.price.toLocaleString()}).`;
+            const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
+            $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
+            $row.append($warn);
         }
 
         if (priceData.listings) {
@@ -837,9 +846,12 @@
                       </div>
                   </div>
 
-                  <div style="text-align:right;margin-top:10px">
-                    <button id="settings-save" style="padding:6px 10px;margin-right:8px">Save</button>
-                    <button id="settings-cancel" style="padding:6px 10px">Cancel</button>
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px">
+                    <button id="settings-refresh-items" style="padding:6px 10px; font-size:12px; opacity:0.8">Refresh Item Data</button>
+                    <div>
+                        <button id="settings-save" style="padding:6px 10px;margin-right:8px">Save</button>
+                        <button id="settings-cancel" style="padding:6px 10px">Cancel</button>
+                    </div>
                   </div>
               </div>
           `);
@@ -1001,6 +1013,36 @@
             $overlay.remove();
         });
         $("#settings-cancel").click(() => $overlay.remove());
+        $("#settings-refresh-items").click(function() {
+            if (!apiKey) {
+                alert("Please enter and save your API key first.");
+                return;
+            }
+            const btn = $(this);
+            const oldText = btn.text();
+            btn.text("Refreshing...").prop("disabled", true);
+
+            safeExecute(async () => {
+                const response = await fetch(`https://api.torn.com/torn/?key=${apiKey}&selections=items&comment=wBazaarFiller`);
+                const data = await response.json();
+                if (!data.items) throw new Error("Failed to fetch items");
+
+                const filtered = {};
+                for (const [id, item] of Object.entries(data.items)) {
+                    if (item.tradeable) {
+                        filtered[id] = {
+                            name: item.name,
+                            market_value: item.market_value,
+                            city_price: item.sell_price || item.buy_price || 0,
+                        };
+                    }
+                }
+                localStorage.setItem("tornItems", JSON.stringify(filtered));
+                setValue("lastUpdatedTime", Date.now());
+                alert("Item data refreshed successfully!");
+                btn.text(oldText).prop("disabled", false);
+            }, 'Manual Item Refresh')();
+        });
     }
     function addPricingSourceLink() {
         if (document.getElementById("pricing-source-button"))
@@ -1223,8 +1265,12 @@
     const todayUTC = new Date().toISOString().split("T")[0];
     const lastUpdatedUTC = lastUpdatedDate.toISOString().split("T")[0];
 
-    if (apiKey && (!storedItems || lastUpdatedUTC < todayUTC || now - lastUpdatedTime >= oneDayMs)) {
+    // Force refresh if data is old, missing, or missing the 'city_price' field
+    const forceRefreshNeeded = storedItems && !storedItems.includes("city_price");
+
+    if (apiKey && (!storedItems || lastUpdatedUTC < todayUTC || now - lastUpdatedTime >= oneDayMs || forceRefreshNeeded)) {
         safeExecute(async () => {
+            debug("Fetching fresh item data from Torn API...");
             const response = await fetch(`https://api.torn.com/torn/?key=${apiKey}&selections=items&comment=wBazaarFiller`);
             const data = await response.json();
 
@@ -1235,16 +1281,19 @@
             const filtered = {};
             for (const [id, item] of Object.entries(data.items)) {
                 if (item.tradeable) {
+                    // In Torn API, sell_price is what you get from selling to a city shop.
+                    // We'll store it as city_price.
                     filtered[id] = {
                         name: item.name,
                         market_value: item.market_value,
-                        buy_price: item.buy_price,
+                        city_price: item.sell_price || item.buy_price || 0,
                     };
                 }
             }
 
             localStorage.setItem("tornItems", JSON.stringify(filtered));
             setValue("lastUpdatedTime", now);
+            debug("Item data refreshed and stored.");
         }, 'Initial Item Fetch')();
     }
     let observerTimeout;
