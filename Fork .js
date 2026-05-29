@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Customizable Bazaar Filler Extended
 // @namespace    j0se
-// @version      1.0 stable before css changes (fork of 1.80)
+// @version      1.1 stable (v1.81 hardening + City Shop lock)
 // @description  On click, auto-fills bazaar item quantities and prices based on your preferences wuth caps, better explanation, mobike bubbles, debug, different bazaar choosing, etc
 // @match        https://www.torn.com/bazaar.php*
 // @require      https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js
@@ -66,6 +66,13 @@
 
   body:not(.dark-mode) .item-toggle{ border-color:#666; background:rgba(0,0,0,0.04); color:#0a7; }
   body:not(.dark-mode) .item-toggle:checked{ background:rgba(0,180,0,0.12); }
+
+  .item-toggle-red { border-color: #ff4444 !important; }
+  .item-toggle-red:checked::after { color: #ff4444 !important; }
+  body.dark-mode .item-toggle-red:checked { background: rgba(255, 68, 68, 0.2) !important; }
+  body:not(.dark-mode) .item-toggle-red:checked { background: rgba(255, 0, 0, 0.1) !important; }
+
+  .city-warning { color: #ff4444; font-size: 12px; margin-top: 4px; display: block; width: 100%; font-weight: bold; }
 
   .checkbox-wrapper{position:absolute;top:50%;right:8px;width:34px;height:34px;transform:translateY(-50%);cursor:pointer;z-index:5}
   .checkbox-wrapper input.item-toggle{position:absolute;left:6px;top:6px}
@@ -132,6 +139,7 @@
     let bazaarMarginType = getValue("bazaarMarginType", "absolute");
     let bazaarClamp = getValue("bazaarClamp", false);
     let bazaarListing = getValue("bazaarListing", 1);
+    let lockCityBetter = getValue("lockCityBetter", false);
     let clampMinIMEnabled = getValue("clampMinIMEnabled", false);
     let clampMinIMPercent = getValue("clampMinIMPercent", 5);
     let blackFridayMode = getValue("blackFridayMode", false);
@@ -260,8 +268,8 @@
             itemName = $row.find(".name-wrap span.t-overflow").text().trim();
         }
         else {
-            $row = $priceInput.closest(".item___jLJcf");
-            itemName = $row.length ? $row.find(".desc___VJSNQ b").text().trim() : "";
+            $row = $priceInput.closest('[class*="item___"]');
+            itemName = $row.length ? $row.find('[class*="desc___"] b').text().trim() : "";
         }
         if (!itemName)
             return;
@@ -288,7 +296,7 @@
             $el.data("listenerAttached", true);
             updatePriceFieldColor($el);
         });
-        $(".price___DoKP7 .input-money-group.success input.input-money").each(function () {
+        $('[class*="price___"] .input-money-group.success input.input-money').each(function () {
             const $el = $(this);
             if ($el.data("listenerAttached"))
                 return;
@@ -323,12 +331,12 @@
         if (!matchedItem) return null;
 
         if (pricingSource === "Market Value") {
-            const mv = matchedItem.market_value;
+            const mv = Number(matchedItem.market_value);
             let finalPrice = mv;
             if (marketMarginType === "absolute") {
-                finalPrice += marketMarginOffset;
+                finalPrice += Number(marketMarginOffset);
             } else if (marketMarginType === "percentage") {
-                finalPrice = Math.round(mv * (1 + marketMarginOffset / 100));
+                finalPrice = Math.round(mv * (1 + Number(marketMarginOffset) / 100));
             }
             return { price: finalPrice, marketValue: mv };
         }
@@ -339,19 +347,19 @@
 
             const listings = data.itemmarket.listings;
             const baseIndex = Math.min(itemMarketListing - 1, listings.length - 1);
-            const listingPrice = listings[baseIndex].price;
+            const listingPrice = Number(listings[baseIndex].price);
 
             let finalPrice;
             if (itemMarketMarginType === "absolute") {
-                finalPrice = listingPrice + itemMarketOffset;
+                finalPrice = listingPrice + Number(itemMarketOffset);
             } else if (itemMarketMarginType === "percentage") {
-                finalPrice = Math.round(listingPrice * (1 + itemMarketOffset / 100));
+                finalPrice = Math.round(listingPrice * (1 + Number(itemMarketOffset) / 100));
             } else {
                 finalPrice = listingPrice;
             }
 
             if (itemMarketClamp && matchedItem.market_value) {
-                finalPrice = Math.max(finalPrice, matchedItem.market_value);
+                finalPrice = Math.max(finalPrice, Number(matchedItem.market_value));
             }
 
             if (clampMinIMEnabled) {
@@ -364,7 +372,7 @@
 
             return {
                 price: finalPrice,
-                marketValue: matchedItem.market_value,
+                marketValue: Number(matchedItem.market_value),
                 listings: listings.slice(0, 5)
             };
         }
@@ -376,19 +384,19 @@
             if (!itemData || !itemData.listings || itemData.listings.length === 0) return null;
 
             const baseIndex = Math.min(bazaarListing - 1, itemData.listings.length - 1);
-            const basePrice = itemData.listings[baseIndex].price;
+            const basePrice = Number(itemData.listings[baseIndex].price);
 
             let finalPrice;
             if (bazaarMarginType === "absolute") {
-                finalPrice = basePrice + bazaarMarginOffset;
+                finalPrice = basePrice + Number(bazaarMarginOffset);
             } else if (bazaarMarginType === "percentage") {
-                finalPrice = Math.round(basePrice * (1 + bazaarMarginOffset / 100));
+                finalPrice = Math.round(basePrice * (1 + Number(bazaarMarginOffset) / 100));
             } else {
                 finalPrice = basePrice;
             }
 
             if (bazaarClamp && matchedItem.market_value) {
-                finalPrice = Math.max(finalPrice, matchedItem.market_value);
+                finalPrice = Math.max(finalPrice, Number(matchedItem.market_value));
             }
 
             if (clampMinIMEnabled && itemId) {
@@ -399,7 +407,7 @@
                 }
             }
 
-            return { price: finalPrice, marketValue: matchedItem.market_value };
+            return { price: finalPrice, marketValue: Number(matchedItem.market_value) };
         }
 
         return null;
@@ -469,6 +477,9 @@
             }
             $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
             $priceInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
+            const $toggle = $row.find(".item-toggle");
+            $row.find(".city-warning").remove();
+            $toggle.removeClass("item-toggle-red");
             return;
         }
 
@@ -483,6 +494,7 @@
         const matchedItem = Object.values(storedItems).find((i) => i.name === itemName);
         const priceData = await calculatePrice(itemName, itemId, matchedItem);
 
+        let quantityToSell;
         if ($choiceCheckbox.length) {
             if (!$choiceCheckbox.prop("checked")) {
                 $choiceCheckbox.click();
@@ -490,7 +502,20 @@
         } else {
             const totalOwned = parseInt($row.find(".item-amount.qty").text().trim().replace(/,/g, ''), 10);
             const unitPrice = priceData ? priceData.price : 0;
-            const quantityToSell = calculateQuantityToSell(totalOwned, unitPrice);
+            quantityToSell = calculateQuantityToSell(totalOwned, unitPrice);
+        }
+
+        const $toggle = $row.find(".item-toggle");
+        $row.find(".city-warning").remove();
+        $toggle.removeClass("item-toggle-red");
+
+        if (lockCityBetter && matchedItem.buy_price && priceData && Number(matchedItem.buy_price) > priceData.price) {
+            quantityToSell = 0;
+            $toggle.addClass("item-toggle-red");
+            $row.append(`<div class="city-warning">You would get more money selling this item in the city shop ($${Number(matchedItem.buy_price).toLocaleString()})</div>`);
+        }
+
+        if (quantityToSell !== undefined) {
             $qtyInput.val(quantityToSell);
             $qtyInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
         }
@@ -521,7 +546,8 @@
         }
     }
     async function updateManageRow($row, isChecked) {
-        const $priceInput = $row.find(".price___DoKP7 .input-money-group.success input.input-money").first();
+        const $priceInput = $row.find('[class*="price___"] .input-money-group.success input.input-money').first();
+        const $qtyInput = $row.find(".amount input").first();
 
         if ($priceInput.length === 0) {
             console.warn("Price input not found in the row:", $row);
@@ -536,12 +562,21 @@
             } else {
                 $priceInput.val("");
             }
+            if ($qtyInput.length && $qtyInput.data("orig") !== undefined) {
+                $qtyInput.val($qtyInput.data("orig"));
+                $qtyInput.removeData("orig");
+            }
             $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+            const $toggle = $row.find(".item-toggle");
+            $row.find(".city-warning").remove();
+            $toggle.removeClass("item-toggle-red");
             return;
         }
 
         if (!$priceInput.data("orig"))
             $priceInput.data("orig", $priceInput.val());
+        if ($qtyInput.length && !$qtyInput.data("orig"))
+            $qtyInput.data("orig", $qtyInput.val());
 
         if (blackFridayMode) {
             $priceInput.val("1");
@@ -549,7 +584,7 @@
             return;
         }
 
-        const itemName = $row.find(".desc___VJSNQ b").text().trim();
+        const itemName = $row.find('[class*="desc___"] b').text().trim();
         const itemId = getItemIdByName(itemName);
         const storedItems = JSON.parse(localStorage.getItem("tornItems") || "{}");
         const matchedItem = Object.values(storedItems).find((i) => i.name === itemName);
@@ -557,8 +592,21 @@
         const priceData = await calculatePrice(itemName, itemId, matchedItem);
         if (!priceData) return;
 
+        const $toggle = $row.find(".item-toggle");
+        $row.find(".city-warning").remove();
+        $toggle.removeClass("item-toggle-red");
+
+        if (lockCityBetter && matchedItem.buy_price && Number(matchedItem.buy_price) > priceData.price) {
+            if ($qtyInput.length) {
+                $qtyInput.val("0");
+                $qtyInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+            }
+            $toggle.addClass("item-toggle-red");
+            $row.append(`<div class="city-warning">You would get more money selling this item in the city shop ($${Number(matchedItem.buy_price).toLocaleString()})</div>`);
+        }
+
         if (priceData.listings) {
-            const $priceInputWrapper = $row.find(".price___DoKP7").first();
+            const $priceInputWrapper = $row.find('[class*="price___"]').first();
             if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
                 const listingsBtn = createListingsButton(priceData.listings);
                 $priceInputWrapper.append(listingsBtn);
@@ -576,6 +624,7 @@
         const $priceInput = $row
             .find("[class*=bottomMobileMenu___] [class*=priceMobile___] .input-money-group.success input.input-money")
             .first();
+        const $qtyInput = $row.find(".amount input").first();
 
         if (!$priceInput.length) {
             console.error("Mobile price field not found.");
@@ -590,12 +639,21 @@
             } else {
                 $priceInput.val("");
             }
+            if ($qtyInput.length && $qtyInput.data("orig") !== undefined) {
+                $qtyInput.val($qtyInput.data("orig"));
+                $qtyInput.removeData("orig");
+            }
             $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+            const $toggle = $row.find(".item-toggle");
+            $row.find(".city-warning").remove();
+            $toggle.removeClass("item-toggle-red");
             return;
         }
 
         if (!$priceInput.data("orig"))
             $priceInput.data("orig", $priceInput.val());
+        if ($qtyInput.length && !$qtyInput.data("orig"))
+            $qtyInput.data("orig", $qtyInput.val());
 
         if (blackFridayMode) {
             $priceInput.val("1");
@@ -603,13 +661,26 @@
             return;
         }
 
-        const itemName = $row.find(".desc___VJSNQ b").text().trim();
+        const itemName = $row.find('[class*="desc___"] b').text().trim();
         const itemId = getItemIdByName(itemName);
         const storedItems = JSON.parse(localStorage.getItem("tornItems") || "{}");
         const matchedItem = Object.values(storedItems).find((i) => i.name === itemName);
 
         const priceData = await calculatePrice(itemName, itemId, matchedItem);
         if (!priceData) return;
+
+        const $toggle = $row.find(".item-toggle");
+        $row.find(".city-warning").remove();
+        $toggle.removeClass("item-toggle-red");
+
+        if (lockCityBetter && matchedItem.buy_price && Number(matchedItem.buy_price) > priceData.price) {
+            if ($qtyInput.length) {
+                $qtyInput.val("0");
+                $qtyInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+            }
+            $toggle.addClass("item-toggle-red");
+            $row.append(`<div class="city-warning">You would get more money selling this item in the city shop ($${Number(matchedItem.buy_price).toLocaleString()})</div>`);
+        }
 
         if (priceData.listings) {
             const $priceInputWrapper = $row.find("[class*=priceMobile___]").first();
@@ -722,6 +793,13 @@
                           <span class="bf-help-placeholder2"></span>
                       </div>
                   </div>
+                  <div class="settings-row" style="align-items:center;">
+                      <div style="min-width:120px"><input id="lock-city-better" type="checkbox" ${lockCityBetter ? "checked":""}></div>
+                      <div style="flex:1;display:flex;align-items:center;gap:8px">
+                          <div>Lock sale if price is better in the city</div>
+                          <span class="bf-help-placeholder-city"></span>
+                      </div>
+                  </div>
 
                   <hr style="border-top:1px solid #ccc; margin:8px 0;">
 
@@ -799,6 +877,12 @@
         const phMargin = $overlay.find(".bf-help-placeholder-margin");
         phMargin.each(function(){
             const text = "Set a margin to adjust the calculated price.\n\n- Absolute ($): Adjusts the price by a fixed amount. A value of -1 will set your price $1 below the calculated price.\n\n- Percentage (%): Adjusts the price by a percentage of the calculated price. A value of -1 will set your price 1% below the calculated price.\n\nExample (Absolute): If the calculated price is $1,000 and you set a margin of -1, your price will be $999.\n\nExample (Percentage): If the calculated price is $1,000 and you set a margin of -1, your price will be $990.";
+            $(this).replaceWith(createTooltipElement(text));
+        });
+
+        const phCity = $overlay.find(".bf-help-placeholder-city");
+        phCity.each(function(){
+            const text = "When checked, the script compares the calculated bazaar price with the price you'd get from selling the item directly to a city shop. If the city shop offers more, the script will set the quantity to 0 and highlight the row in red, preventing you from accidentally selling at a loss compared to city shops.";
             $(this).replaceWith(createTooltipElement(text));
         });
 
@@ -890,6 +974,7 @@
 
             clampMinIMEnabled = $("#im-clamp-enabled").is(":checked");
             clampMinIMPercent = Number($("#im-clamp-percent").val() || 0) || 0;
+            lockCityBetter = $("#lock-city-better").is(":checked");
             
             setValue("tornApiKey", apiKey);
             setValue("pricingSource", pricingSource);
@@ -911,6 +996,7 @@
             setValue("moneyLimitValue", moneyLimitValue);
             setValue("clampMinIMEnabled", clampMinIMEnabled);
             setValue("clampMinIMPercent", clampMinIMPercent);
+            setValue("lockCityBetter", lockCityBetter);
 
             $overlay.remove();
         });
@@ -920,7 +1006,7 @@
         if (document.getElementById("pricing-source-button"))
             return;
 
-        const linksContainer = document.querySelector(".linksContainer___LiOTN");
+        const linksContainer = document.querySelector('[class*="linksContainer___"]');
         if (!linksContainer) {
             return;
         }
@@ -928,12 +1014,10 @@
         const link = document.createElement("a");
         link.id = "pricing-source-button";
         link.href = "#";
-        link.className = "linkContainer___X16y4 inRow___VfDnd greyLineV___up8VP iconActive___oAum9";
         link.target = "_self";
         link.rel = "noreferrer";
 
         const iconSpan = document.createElement("span");
-        iconSpan.className = "iconWrapper___x3ZLe iconWrapper___COKJD svgIcon___IwbJV";
         iconSpan.innerHTML = `
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
                 <path d="M8 4.754a3.246 3.246 0 1 1 0 6.492 3.246 3.246 0 0 1 0-6.492zM5.754 8a2.246 2.246 0 1 0 4.492 0 2.246 2.246 0 0 0-4.492 0z"/>
@@ -943,9 +1027,10 @@
         link.appendChild(iconSpan);
 
         const textSpan = document.createElement("span");
-        textSpan.className = "linkTitle____NPyM";
         textSpan.textContent = "Bazaar Filler Settings";
         link.appendChild(textSpan);
+
+        copySidebarLinkClasses(link, iconSpan, textSpan, linksContainer);
 
         link.addEventListener("click", function (e) {
             e.preventDefault();
@@ -958,7 +1043,7 @@
         if (document.getElementById("black-friday-toggle"))
             return;
 
-        const linksContainer = document.querySelector(".linksContainer___LiOTN");
+        const linksContainer = document.querySelector('[class*="linksContainer___"]');
         if (!linksContainer) {
             return;
         }
@@ -966,15 +1051,10 @@
         const link = document.createElement("a");
         link.id = "black-friday-toggle";
         link.href = "#";
-        link.className = "linkContainer___X16y4 inRow___VfDnd greyLineV___up8VP iconActive___oAum9";
-        if (blackFridayMode) {
-            link.classList.add("black-friday-active");
-        }
         link.target = "_self";
         link.rel = "noreferrer";
 
         const iconSpan = document.createElement("span");
-        iconSpan.className = "iconWrapper___x3ZLe iconWrapper___COKJD svgIcon___IwbJV";
         iconSpan.innerHTML = `
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" class="black-friday-icon" style="color: ${blackFridayMode ? "#28a745" : "inherit"}; fill: ${blackFridayMode ? "#28a745" : "currentColor"};">
                 <path d="M4 10.781c.148 1.667 1.513 2.85 3.591 3.003V15h1.043v-1.216c2.27-.179 3.678-1.438 3.678-3.3 0-1.59-.947-2.51-2.956-3.028l-.722-.187V3.467c1.122.11 1.879.714 2.07 1.616h1.47c-.166-1.6-1.54-2.748-3.54-2.875V1H7.591v1.233c-1.939.23-3.27 1.472-3.27 3.156 0 1.454.966 2.483 2.661 2.917l.61.162v4.031c-1.149-.17-1.94-.8-2.131-1.718H4zm3.391-3.836c-1.043-.263-1.6-.825-1.6-1.616 0-.944.704-1.641 1.8-1.828v3.495l-.2-.05zm1.591 1.872c1.287.323 1.852.859 1.852 1.769 0 1.097-.826 1.828-2.2 1.939V8.73l.348.086z"/>
@@ -983,9 +1063,13 @@
         link.appendChild(iconSpan);
 
         const textSpan = document.createElement("span");
-        textSpan.className = "linkTitle____NPyM";
         textSpan.textContent = blackFridayMode ? "Black Friday: ON" : "Black Friday: OFF";
         link.appendChild(textSpan);
+
+        copySidebarLinkClasses(link, iconSpan, textSpan, linksContainer);
+        if (blackFridayMode) {
+            link.classList.add("black-friday-active");
+        }
 
         link.addEventListener("click", function (e) {
             e.preventDefault();
@@ -1101,20 +1185,22 @@
         }
     }
     function addManagePageCheckboxes() {
-        $(".item___jLJcf").each(function () {
+        $('[class*="item___"]').each(function () {
             const $row = $(this);
-            const $desc = $row.find(".desc___VJSNQ");
+            const $desc = $row.find('[class*="desc___"]');
             if (!$desc.length || $desc.find(".checkbox-wrapper").length)
                 return;
             $desc.css("position", "relative");
             const wrapper = $('<div class="checkbox-wrapper"></div>');
             const checkbox = createItemToggleCheckbox(async function(e) {
-                const $row = $(this).closest(".item___jLJcf");
+                const $row = $(this).closest('[class*="item___"]');
                 if (window.innerWidth <= 784) {
                     const $manageBtn = $row.find('button[aria-label="Manage"]').first();
                     if ($manageBtn.length) {
-                        if (!$manageBtn.find("span").hasClass("active___OTFsm")) {
-                            $manageBtn.click();
+                        const manageOpen = $manageBtn.find("span").get()
+                            .some((el) => [...el.classList].some((c) => c.startsWith("active___")));
+                        if (!manageOpen) {
+                            $manageBtn.trigger("click");
                         }
                         setTimeout(async () => {
                             await updateManageRowMobile($row, this.checked);
@@ -1152,6 +1238,7 @@
                     filtered[id] = {
                         name: item.name,
                         market_value: item.market_value,
+                        buy_price: item.buy_price,
                     };
                 }
             }
@@ -1210,11 +1297,11 @@
         setTimeout(initializeUI, 100);
     });
 
-    $(document).on("click", "button.undo___FTgvP", function (e) {
+    $(document).on("click", 'button[class*="undo___"]', function (e) {
         e.preventDefault();
-        $(".item___jLJcf .checkbox-wrapper input.item-toggle:checked").each(function () {
+        $('[class*="item___"] .checkbox-wrapper input.item-toggle:checked').each(function () {
             $(this).prop("checked", false);
-            const $row = $(this).closest(".item___jLJcf");
+            const $row = $(this).closest('[class*="item___"]');
             updateManageRow($row, false);
         });
     });
@@ -1230,6 +1317,20 @@
         itemMarketCache = {};
         weav3rItemCache = {};
     });
+
+    function copySidebarLinkClasses(linkEl, iconSpan, textSpan, linksContainer) {
+        const refLink = linksContainer.querySelector("a[href]:not(#pricing-source-button):not(#black-friday-toggle)")
+            || linksContainer.querySelector("a[href]");
+        if (!refLink)
+            return;
+        linkEl.className = refLink.className;
+        const refIcon = refLink.querySelector('[class*="iconWrapper___"]');
+        const refTitle = refLink.querySelector('[class*="linkTitle___"]');
+        if (refIcon)
+            iconSpan.className = refIcon.className;
+        if (refTitle)
+            textSpan.className = refTitle.className;
+    }
 
     let bubbleEl = null;
     function showBubble(anchorRect, text) {
