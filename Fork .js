@@ -1340,22 +1340,63 @@
         }, 'Initial Item Fetch')();
     }
     let observerTimeout;
+    let isObserverLocked = false;
     const domObserver = new MutationObserver((mutations) => {
-        // Optimization: Only act if relevant elements might have changed
+        if (isObserverLocked) return;
+
+        const bazaarRoot = document.getElementById('bazaarRoot');
         let relevant = false;
-        for (const m of mutations) {
-            if (m.addedNodes.length || m.type === 'attributes') {
-                relevant = true;
-                break;
+
+        for (let i = 0; i < mutations.length; i++) {
+            const m = mutations[i];
+            const target = m.target;
+
+            // Optimization: Ignore noise outside bazaar area if it exists
+            if (bazaarRoot && target.nodeType === 1 && target !== document.body && !bazaarRoot.contains(target)) {
+                // We still want to allow sidebar button updates
+                if (!target.closest || !target.closest('[class*="linksContainer___"]')) {
+                    continue;
+                }
             }
+
+            if (m.addedNodes.length) {
+                for (let j = 0; j < m.addedNodes.length; j++) {
+                    const node = m.addedNodes[j];
+                    if (node.nodeType === 1) {
+                        // Fast class/ID checks for bazaar indicators
+                        const className = (typeof node.className === 'string') ? node.className : '';
+                        if (node.id === 'bazaarRoot' ||
+                            node.classList.contains('items-cont') ||
+                            node.classList.contains('clearfix') ||
+                            className.includes('item___')) {
+                            relevant = true;
+                            break;
+                        }
+                    }
+                }
+            } else if (m.type === 'attributes' && m.attributeName === 'class') {
+                // Check if it's a mobile "Manage" button activation (active___ suffix)
+                if (target.classList && [...target.classList].some(c => c.startsWith('active___'))) {
+                    relevant = true;
+                }
+            }
+            if (relevant) break;
         }
+
         if (!relevant) return;
 
         clearTimeout(observerTimeout);
         observerTimeout = setTimeout(() => {
+            if (isObserverLocked) return;
+
+            const hash = window.location.hash;
+            // Only proceed if on a valid sub-page or if sidebar buttons are missing
+            const needsButtons = !document.getElementById("pricing-source-button");
+            if (!validPages.includes(hash) && !needsButtons) return;
+
+            isObserverLocked = true;
             const p = profile("DOM Observer Update");
-            safeExecute(() => {
-                const hash = window.location.hash;
+            try {
                 if (hash === "#/add") {
                     addAddPageCheckboxes();
                 }
@@ -1365,15 +1406,19 @@
                 addPricingSourceLink();
                 addBlackFridayToggle();
                 setupPriceDelegation();
-            }, 'DOM Observer')();
-            p.end();
-        }, 100);
+            } finally {
+                isObserverLocked = false;
+                p.end();
+            }
+        }, 250); // Increased debounce to 250ms for better stability on older mobile devices
     });
 
-    const observeTarget = document.querySelector('#bazaarRoot') || document.body;
-    domObserver.observe(observeTarget, {
+    // Observe body with attribute filter to minimize noise from unrelated changes
+    domObserver.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class']
     });
 
     const initializeUI = safeExecute(() => {
