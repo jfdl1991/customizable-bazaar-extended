@@ -1350,34 +1350,30 @@
         for (let i = 0; i < mutations.length; i++) {
             const m = mutations[i];
             const target = m.target;
+            if (target.nodeType !== 1) continue;
 
-            // Optimization: Ignore noise outside bazaar area if it exists
-            if (bazaarRoot && target.nodeType === 1 && target !== document.body && !bazaarRoot.contains(target)) {
-                // We still want to allow sidebar button updates
-                if (!target.closest || !target.closest('[class*="linksContainer___"]')) {
-                    continue;
-                }
+            // If change is inside Bazaar or Sidebar, it's relevant
+            if (bazaarRoot && (target === bazaarRoot || bazaarRoot.contains(target))) {
+                relevant = true;
+                break;
             }
 
+            if (target.closest('[class*="linksContainer___"]') || target.closest('#pricing-source-button')) {
+                relevant = true;
+                break;
+            }
+
+            // Fallback for when elements are added to body (like bazaarRoot itself)
             if (m.addedNodes.length) {
                 for (let j = 0; j < m.addedNodes.length; j++) {
                     const node = m.addedNodes[j];
                     if (node.nodeType === 1) {
-                        // Fast class/ID checks for bazaar indicators
-                        const className = (typeof node.className === 'string') ? node.className : '';
-                        if (node.id === 'bazaarRoot' ||
-                            node.classList.contains('items-cont') ||
-                            node.classList.contains('clearfix') ||
-                            className.includes('item___')) {
+                        if (node.id === 'bazaarRoot' || node.querySelector('#bazaarRoot') ||
+                            node.closest('[class*="linksContainer___"]') || node.querySelector('[class*="linksContainer___"]')) {
                             relevant = true;
                             break;
                         }
                     }
-                }
-            } else if (m.type === 'attributes' && m.attributeName === 'class') {
-                // Check if it's a mobile "Manage" button activation (active___ suffix)
-                if (target.classList && [...target.classList].some(c => c.startsWith('active___'))) {
-                    relevant = true;
                 }
             }
             if (relevant) break;
@@ -1392,6 +1388,8 @@
             const hash = window.location.hash;
             // Only proceed if on a valid sub-page or if sidebar buttons are missing
             const needsButtons = !document.getElementById("pricing-source-button");
+
+            // If we are not on a valid page AND we don't need buttons, skip
             if (!validPages.includes(hash) && !needsButtons) return;
 
             isObserverLocked = true;
@@ -1403,6 +1401,7 @@
                 else if (hash === "#/manage") {
                     addManagePageCheckboxes();
                 }
+                // Always try to add buttons if they are missing, as long as we are in bazaar.php
                 addPricingSourceLink();
                 addBlackFridayToggle();
                 setupPriceDelegation();
@@ -1410,15 +1409,15 @@
                 isObserverLocked = false;
                 p.end();
             }
-        }, 250); // Increased debounce to 250ms for better stability on older mobile devices
+        }, 150); // Reduced debounce slightly to feel more responsive while still batching
     });
 
-    // Observe body with attribute filter to minimize noise from unrelated changes
+    // Observe body to catch all relevant changes
     domObserver.observe(document.body, {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ['class']
+        attributeFilter: ['class', 'style'] // Added style to catch virtual scrolling updates
     });
 
     const initializeUI = safeExecute(() => {
