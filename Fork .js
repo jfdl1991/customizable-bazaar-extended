@@ -86,9 +86,20 @@
   body.dark-mode .item-toggle-red:checked { background: rgba(255, 68, 68, 0.3) !important; }
   body:not(.dark-mode) .item-toggle-red:checked { background: rgba(255, 0, 0, 0.15) !important; }
 
-  .city-warning { color: #ff4444; font-size: 12px; margin: 4px 0; display: block; width: 100%; font-weight: bold; cursor: pointer; text-decoration: underline dotted; }
+  .city-warning {
+      color: #ff4444;
+      font-size: 12px;
+      margin: 4px 2px;
+      display: block;
+      width: 100%;
+      clear: both;
+      font-weight: bold;
+      cursor: pointer;
+      text-decoration: underline dotted;
+      text-align: left;
+  }
 
-  .checkbox-wrapper{position:absolute;top:50%;right:8px;width:34px;height:34px;transform:translateY(-50%);cursor:pointer;z-index:5}
+  .checkbox-wrapper{position:absolute;top:50%;right:8px;width:34px;height:34px;transform:translateY(-50%);cursor:pointer;z-index:10}
   .checkbox-wrapper input.item-toggle{position:absolute;left:6px;top:6px}
 
   /* rest of modal styles (kept compact & responsive) */
@@ -472,8 +483,8 @@
         return finalQty;
     }
 
-    async function updateAddRow($row, isChecked) {
-        debug(`Updating 'Add' row. Checked: ${isChecked}`);
+    async function updateAddRow($row, isChecked, isManual = false) {
+        debug(`Updating 'Add' row. Checked: ${isChecked}, Manual: ${isManual}`);
         const $qtyInput = $row.find(".amount input").first();
         const $priceInput = $row.find(".price input").first();
         const $choiceCheckbox = $row.find("div.amount.choice-container input");
@@ -537,7 +548,11 @@
             const warningMsg = `You would get more money selling this item in the city shop ($${Number(matchedItem.city_price).toLocaleString()}) than in your bazaar ($${priceData.price.toLocaleString()}).`;
             const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
             $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
-            $row.append($warn);
+            $row.css('flex-wrap', 'wrap').append($warn);
+
+            if (isChecked && isManual) {
+                showCenterModalTip(warningMsg, "City Shop Warning");
+            }
         }
 
         if (quantityToSell !== undefined) {
@@ -570,7 +585,7 @@
             $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
-    async function updateManageRow($row, isChecked) {
+    async function updateManageRow($row, isChecked, isManual = false) {
         const $priceInput = $row.find('[class*="price___"] .input-money-group.success input.input-money').first();
         const $qtyInput = $row.find(".amount input").first();
 
@@ -629,7 +644,11 @@
             const warningMsg = `You would get more money selling this item in the city shop ($${Number(matchedItem.city_price).toLocaleString()}) than in your bazaar ($${priceData.price.toLocaleString()}).`;
             const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
             $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
-            $row.append($warn);
+            $row.css('flex-wrap', 'wrap').append($warn);
+
+            if (isChecked && isManual) {
+                showCenterModalTip(warningMsg, "City Shop Warning");
+            }
         }
 
         if (priceData.listings) {
@@ -647,7 +666,7 @@
             $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
-    async function updateManageRowMobile($row, isChecked) {
+    async function updateManageRowMobile($row, isChecked, isManual = false) {
         const $priceInput = $row
             .find("[class*=bottomMobileMenu___] [class*=priceMobile___] .input-money-group.success input.input-money")
             .first();
@@ -708,7 +727,11 @@
             const warningMsg = `You would get more money selling this item in the city shop ($${Number(matchedItem.city_price).toLocaleString()}) than in your bazaar ($${priceData.price.toLocaleString()}).`;
             const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
             $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
-            $row.append($warn);
+            $row.css('flex-wrap', 'wrap').append($warn);
+
+            if (isChecked && isManual) {
+                showCenterModalTip(warningMsg, "City Shop Warning");
+            }
         }
 
         if (priceData.listings) {
@@ -1173,7 +1196,7 @@
                     openSettingsModal();
                     throw error;
                 }
-                await updateFunction.call(this, e);
+                await updateFunction.call(this, e, true);
             }, context),
         });
     }
@@ -1193,8 +1216,8 @@
                 title.style.position = 'relative';
                 const wrapper = document.createElement('div');
                 wrapper.className = 'checkbox-wrapper';
-                const $checkbox = createItemToggleCheckbox(async function(e) {
-                    await updateAddRow($(this).closest("li.clearfix"), this.checked);
+                const $checkbox = createItemToggleCheckbox(async function(e, isManual) {
+                    await updateAddRow($(this).closest("li.clearfix"), this.checked, isManual);
                 }, 'Add Page Checkbox Click');
                 $(wrapper).append($checkbox);
                 title.appendChild(wrapper);
@@ -1274,7 +1297,7 @@
             desc.style.position = 'relative';
             const wrapper = document.createElement('div');
             wrapper.className = 'checkbox-wrapper';
-            const $checkbox = createItemToggleCheckbox(async function(e) {
+            const $checkbox = createItemToggleCheckbox(async function(e, isManual) {
                 const $row = $(this).closest('[class*="item___"]');
                 if (window.innerWidth <= 784) {
                     const $manageBtn = $row.find('button[aria-label="Manage"]').first();
@@ -1285,12 +1308,12 @@
                             $manageBtn.trigger("click");
                         }
                         setTimeout(async () => {
-                            await updateManageRowMobile($row, this.checked);
+                            await updateManageRowMobile($row, this.checked, isManual);
                         }, 200);
                         return;
                     }
                 }
-                await updateManageRow($row, this.checked);
+                await updateManageRow($row, this.checked, isManual);
             }, 'Manage Page Checkbox Click');
             $(wrapper).append($checkbox);
             desc.appendChild(wrapper);
