@@ -19,9 +19,23 @@
     const DEBUG = true; // Set to false to disable logging
     function debug(message, ...data) {
         if (DEBUG) {
-            console.log(`[Customizable Bazar filler]: ${message}`, ...data);
+            const now = new Date();
+            const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${now.getMilliseconds().toString().padStart(3, '0')}`;
+            console.log(`[Customizable Bazaar filler][${time}]: ${message}`, ...data);
         }
     }
+
+    function profile(name) {
+        if (!DEBUG) return { end: () => {} };
+        const start = performance.now();
+        return {
+            end: (msg = '') => {
+                const duration = (performance.now() - start).toFixed(2);
+                debug(`${name} took ${duration}ms ${msg}`);
+            }
+        };
+    }
+
     debug("Script starting...");
 
     function handleError(error, context = '') {
@@ -72,9 +86,20 @@
   body.dark-mode .item-toggle-red:checked { background: rgba(255, 68, 68, 0.3) !important; }
   body:not(.dark-mode) .item-toggle-red:checked { background: rgba(255, 0, 0, 0.15) !important; }
 
-  .city-warning { color: #ff4444; font-size: 12px; margin: 4px 0; display: block; width: 100%; font-weight: bold; cursor: pointer; text-decoration: underline dotted; }
+  .city-warning {
+      color: #ff4444;
+      font-size: 12px;
+      margin: 4px 2px;
+      display: block;
+      width: 100%;
+      clear: both;
+      font-weight: bold;
+      cursor: pointer;
+      text-decoration: underline dotted;
+      text-align: left;
+  }
 
-  .checkbox-wrapper{position:absolute;top:50%;right:8px;width:34px;height:34px;transform:translateY(-50%);cursor:pointer;z-index:5}
+  .checkbox-wrapper{position:absolute;top:50%;right:8px;width:34px;height:34px;transform:translateY(-50%);cursor:pointer;z-index:10}
   .checkbox-wrapper input.item-toggle{position:absolute;left:6px;top:6px}
 
   /* rest of modal styles (kept compact & responsive) */
@@ -153,13 +178,29 @@
     let currentPage = window.location.hash;
     let itemMarketCache = {};
     let weav3rItemCache = {};
+    let cachedTornItems = {};
 
+    function updateCachedItems() {
+        const p = profile("updateCachedItems");
+        const stored = localStorage.getItem("tornItems");
+        if (stored) {
+            try {
+                cachedTornItems = JSON.parse(stored);
+                p.end(`(${Object.keys(cachedTornItems).length} items)`);
+            } catch (e) {
+                debug("Error parsing tornItems from localStorage", e);
+                cachedTornItems = {};
+            }
+        } else {
+            p.end("(No items in storage)");
+        }
+    }
+    updateCachedItems();
 
 
     function getItemIdByName(itemName) {
-        const storedItems = JSON.parse(localStorage.getItem("tornItems") || "{}");
-        for (const [id, info] of Object.entries(storedItems)) {
-            if (info.name === itemName)
+        for (const id in cachedTornItems) {
+            if (cachedTornItems[id].name === itemName)
                 return id;
         }
         return null;
@@ -273,8 +314,8 @@
         }
         if (!itemName)
             return;
-        const storedItems = JSON.parse(localStorage.getItem("tornItems") || "{}");
-        const matchedItem = Object.values(storedItems).find((i) => i.name === itemName);
+
+        const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
         if (!matchedItem || !matchedItem.market_value)
             return;
         const raw = ((_a = $priceInput.val()) === null || _a === void 0 ? void 0 : _a.replace(/,/g, "")) || "";
@@ -285,37 +326,21 @@
         }
         $priceInput.css("color", getPriceColor(typedPrice, matchedItem.market_value));
     }
-    function attachPriceFieldObservers() {
-        $(".price input").each(function () {
-            const $el = $(this);
-            if ($el.data("listenerAttached"))
-                return;
-            $el.on("input", function () {
-                updatePriceFieldColor($(this));
-            });
-            $el.data("listenerAttached", true);
-            updatePriceFieldColor($el);
+
+    function setupPriceDelegation() {
+        const $root = $('#bazaarRoot');
+        if (!$root.length || $root.data('bfDelegation')) return;
+
+        debug("Setting up event delegation for price fields...");
+        $root.on('input focus', 'input', function(e) {
+            const $target = $(this);
+            // Robust check if this input is within a price container
+            const isPrice = $target.closest('.price, [class*="price___"], [class*="priceMobile___"]').length > 0;
+            if (isPrice) {
+                updatePriceFieldColor($target);
+            }
         });
-        $('[class*="price___"] .input-money-group.success input.input-money').each(function () {
-            const $el = $(this);
-            if ($el.data("listenerAttached"))
-                return;
-            $el.on("input", function () {
-                updatePriceFieldColor($(this));
-            });
-            $el.data("listenerAttached", true);
-            updatePriceFieldColor($el);
-        });
-        $("[class*=bottomMobileMenu___] [class*=priceMobile___] .input-money-group.success input.input-money").each(function () {
-            const $el = $(this);
-            if ($el.data("listenerAttached"))
-                return;
-            $el.on("input", function () {
-                updatePriceFieldColor($(this));
-            });
-            $el.data("listenerAttached", true);
-            updatePriceFieldColor($el);
-        });
+        $root.data('bfDelegation', true);
     }
 
     async function getLowestItemMarketPrice(itemId) {
@@ -328,7 +353,10 @@
     }
 
     async function calculatePrice(itemName, itemId, matchedItem) {
-        if (!matchedItem) return null;
+        if (!matchedItem) {
+            debug(`No matched item data for: ${itemName}`);
+            return null;
+        }
 
         if (pricingSource === "Market Value") {
             const mv = Number(matchedItem.market_value);
@@ -342,6 +370,7 @@
         }
 
         if (pricingSource === "Item Market" && itemId) {
+            debug(`Calculating price via Item Market for ${itemName} (${itemId})`);
             const data = await safeExecute(fetchItemMarketData, 'Fetch Item Market Data')(itemId);
             if (!data || !data.itemmarket?.listings?.length) return null;
 
@@ -378,7 +407,11 @@
         }
 
         if (pricingSource === "Bazaars/weav3r.dev") {
-            if (!itemId) return null;
+            if (!itemId) {
+                debug(`No item ID for ${itemName}, cannot fetch weav3r.dev data`);
+                return null;
+            }
+            debug(`Calculating price via weav3r.dev for ${itemName} (${itemId})`);
 
             const itemData = await safeExecute(fetchWeav3rItemData, 'Fetch weav3r.dev Item Data')(itemId);
             if (!itemData || !itemData.listings || itemData.listings.length === 0) return null;
@@ -450,8 +483,8 @@
         return finalQty;
     }
 
-    async function updateAddRow($row, isChecked) {
-        debug(`Updating 'Add' row. Checked: ${isChecked}`);
+    async function updateAddRow($row, isChecked, isManual = false) {
+        debug(`Updating 'Add' row. Checked: ${isChecked}, Manual: ${isManual}`);
         const $qtyInput = $row.find(".amount input").first();
         const $priceInput = $row.find(".price input").first();
         const $choiceCheckbox = $row.find("div.amount.choice-container input");
@@ -490,8 +523,7 @@
 
         const itemName = $row.find(".name-wrap span.t-overflow").text().trim();
         const itemId = getItemIdByName(itemName);
-        const storedItems = JSON.parse(localStorage.getItem("tornItems") || "{}");
-        const matchedItem = Object.values(storedItems).find((i) => i.name === itemName);
+        const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
         const priceData = await calculatePrice(itemName, itemId, matchedItem);
 
         let quantityToSell;
@@ -510,12 +542,17 @@
         $toggle.removeClass("item-toggle-red");
 
         if (lockCityBetter && matchedItem.city_price && priceData && Number(matchedItem.city_price) > priceData.price) {
+            debug(`City price ($${matchedItem.city_price}) is better than calculated price ($${priceData.price}) for ${itemName}. Locking.`);
             quantityToSell = 0;
             $toggle.addClass("item-toggle-red");
             const warningMsg = `You would get more money selling this item in the city shop ($${Number(matchedItem.city_price).toLocaleString()}) than in your bazaar ($${priceData.price.toLocaleString()}).`;
             const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
             $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
-            $row.append($warn);
+            $row.css('flex-wrap', 'wrap').append($warn);
+
+            if (isChecked && isManual) {
+                showCenterModalTip(warningMsg, "City Shop Warning");
+            }
         }
 
         if (quantityToSell !== undefined) {
@@ -548,7 +585,7 @@
             $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
-    async function updateManageRow($row, isChecked) {
+    async function updateManageRow($row, isChecked, isManual = false) {
         const $priceInput = $row.find('[class*="price___"] .input-money-group.success input.input-money').first();
         const $qtyInput = $row.find(".amount input").first();
 
@@ -589,8 +626,7 @@
 
         const itemName = $row.find('[class*="desc___"] b').text().trim();
         const itemId = getItemIdByName(itemName);
-        const storedItems = JSON.parse(localStorage.getItem("tornItems") || "{}");
-        const matchedItem = Object.values(storedItems).find((i) => i.name === itemName);
+        const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
         const priceData = await calculatePrice(itemName, itemId, matchedItem);
         if (!priceData) return;
@@ -608,7 +644,11 @@
             const warningMsg = `You would get more money selling this item in the city shop ($${Number(matchedItem.city_price).toLocaleString()}) than in your bazaar ($${priceData.price.toLocaleString()}).`;
             const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
             $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
-            $row.append($warn);
+            $row.css('flex-wrap', 'wrap').append($warn);
+
+            if (isChecked && isManual) {
+                showCenterModalTip(warningMsg, "City Shop Warning");
+            }
         }
 
         if (priceData.listings) {
@@ -626,7 +666,7 @@
             $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
-    async function updateManageRowMobile($row, isChecked) {
+    async function updateManageRowMobile($row, isChecked, isManual = false) {
         const $priceInput = $row
             .find("[class*=bottomMobileMenu___] [class*=priceMobile___] .input-money-group.success input.input-money")
             .first();
@@ -669,8 +709,7 @@
 
         const itemName = $row.find('[class*="desc___"] b').text().trim();
         const itemId = getItemIdByName(itemName);
-        const storedItems = JSON.parse(localStorage.getItem("tornItems") || "{}");
-        const matchedItem = Object.values(storedItems).find((i) => i.name === itemName);
+        const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
         const priceData = await calculatePrice(itemName, itemId, matchedItem);
         if (!priceData) return;
@@ -688,7 +727,11 @@
             const warningMsg = `You would get more money selling this item in the city shop ($${Number(matchedItem.city_price).toLocaleString()}) than in your bazaar ($${priceData.price.toLocaleString()}).`;
             const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
             $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
-            $row.append($warn);
+            $row.css('flex-wrap', 'wrap').append($warn);
+
+            if (isChecked && isManual) {
+                showCenterModalTip(warningMsg, "City Shop Warning");
+            }
         }
 
         if (priceData.listings) {
@@ -1038,6 +1081,7 @@
                     }
                 }
                 localStorage.setItem("tornItems", JSON.stringify(filtered));
+                updateCachedItems();
                 setValue("lastUpdatedTime", Date.now());
                 alert("Item data refreshed successfully!");
                 btn.text(oldText).prop("disabled", false);
@@ -1152,24 +1196,35 @@
                     openSettingsModal();
                     throw error;
                 }
-                await updateFunction.call(this, e);
+                await updateFunction.call(this, e, true);
             }, context),
         });
     }
 
     function addAddPageCheckboxes() {
-        $(".items-cont .title-wrap").each(function () {
-            const $el = $(this);
-            if ($el.find(".checkbox-wrapper").length)
-                return;
-            $el.css("position", "relative");
-            const wrapper = $('<div class="checkbox-wrapper"></div>');
-            const checkbox = createItemToggleCheckbox(async function(e) {
-                await updateAddRow($(this).closest("li.clearfix"), this.checked);
-            }, 'Add Page Checkbox Click');
-            wrapper.append(checkbox);
-            $el.append(wrapper);
-        });
+        const p = profile("addAddPageCheckboxes");
+        // Target specifically the items containers to narrow the search
+        const containers = document.querySelectorAll('.items-cont');
+        if (!containers.length) { p.end("(no containers)"); return; }
+
+        let added = 0;
+        for (const cont of containers) {
+            const titles = cont.querySelectorAll('.title-wrap');
+            for (const title of titles) {
+                if (title.querySelector('.checkbox-wrapper')) continue;
+
+                title.style.position = 'relative';
+                const wrapper = document.createElement('div');
+                wrapper.className = 'checkbox-wrapper';
+                const $checkbox = createItemToggleCheckbox(async function(e, isManual) {
+                    await updateAddRow($(this).closest("li.clearfix"), this.checked, isManual);
+                }, 'Add Page Checkbox Click');
+                $(wrapper).append($checkbox);
+                title.appendChild(wrapper);
+                added++;
+            }
+        }
+        p.end(`(added ${added} checkboxes)`);
         $(document)
             .off("dblclick", ".amount input")
             .on("dblclick", ".amount input", function () {
@@ -1227,14 +1282,22 @@
         }
     }
     function addManagePageCheckboxes() {
-        $('[class*="item___"]').each(function () {
-            const $row = $(this);
-            const $desc = $row.find('[class*="desc___"]');
-            if (!$desc.length || $desc.find(".checkbox-wrapper").length)
-                return;
-            $desc.css("position", "relative");
-            const wrapper = $('<div class="checkbox-wrapper"></div>');
-            const checkbox = createItemToggleCheckbox(async function(e) {
+        const p = profile("addManagePageCheckboxes");
+        const root = document.querySelector('#bazaarRoot');
+        if (!root) { p.end("(no root)"); return; }
+
+        const rows = root.querySelectorAll('[class*="item___"]');
+        if (rows.length === 0) { p.end("(no rows)"); return; }
+
+        let added = 0;
+        for (const row of rows) {
+            const desc = row.querySelector('[class*="desc___"]');
+            if (!desc || desc.querySelector('.checkbox-wrapper')) continue;
+
+            desc.style.position = 'relative';
+            const wrapper = document.createElement('div');
+            wrapper.className = 'checkbox-wrapper';
+            const $checkbox = createItemToggleCheckbox(async function(e, isManual) {
                 const $row = $(this).closest('[class*="item___"]');
                 if (window.innerWidth <= 784) {
                     const $manageBtn = $row.find('button[aria-label="Manage"]').first();
@@ -1245,16 +1308,18 @@
                             $manageBtn.trigger("click");
                         }
                         setTimeout(async () => {
-                            await updateManageRowMobile($row, this.checked);
+                            await updateManageRowMobile($row, this.checked, isManual);
                         }, 200);
                         return;
                     }
                 }
-                await updateManageRow($row, this.checked);
+                await updateManageRow($row, this.checked, isManual);
             }, 'Manage Page Checkbox Click');
-            wrapper.append(checkbox);
-            $desc.append(wrapper);
-        });
+            $(wrapper).append($checkbox);
+            desc.appendChild(wrapper);
+            added++;
+        }
+        p.end(`(added ${added} checkboxes)`);
     }
 
     const storedItems = localStorage.getItem("tornItems");
@@ -1292,39 +1357,94 @@
             }
 
             localStorage.setItem("tornItems", JSON.stringify(filtered));
+            updateCachedItems();
             setValue("lastUpdatedTime", now);
             debug("Item data refreshed and stored.");
         }, 'Initial Item Fetch')();
     }
     let observerTimeout;
+    let isObserverLocked = false;
     const domObserver = new MutationObserver((mutations) => {
+        if (isObserverLocked) return;
+
+        const bazaarRoot = document.getElementById('bazaarRoot');
+        let relevant = false;
+
+        for (let i = 0; i < mutations.length; i++) {
+            const m = mutations[i];
+            const target = m.target;
+            if (target.nodeType !== 1) continue;
+
+            // If change is inside Bazaar or Sidebar, it's relevant
+            if (bazaarRoot && (target === bazaarRoot || bazaarRoot.contains(target))) {
+                relevant = true;
+                break;
+            }
+
+            if (target.closest('[class*="linksContainer___"]') || target.closest('#pricing-source-button')) {
+                relevant = true;
+                break;
+            }
+
+            // Fallback for when elements are added to body (like bazaarRoot itself)
+            if (m.addedNodes.length) {
+                for (let j = 0; j < m.addedNodes.length; j++) {
+                    const node = m.addedNodes[j];
+                    if (node.nodeType === 1) {
+                        if (node.id === 'bazaarRoot' || node.querySelector('#bazaarRoot') ||
+                            node.closest('[class*="linksContainer___"]') || node.querySelector('[class*="linksContainer___"]')) {
+                            relevant = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (relevant) break;
+        }
+
+        if (!relevant) return;
+
         clearTimeout(observerTimeout);
         observerTimeout = setTimeout(() => {
-            debug("DOM changed, running UI updates.");
-            safeExecute(() => {
-                const hash = window.location.hash;
-                debug(`Current page hash: ${hash}`);
+            if (isObserverLocked) return;
+
+            const hash = window.location.hash;
+            // Only proceed if on a valid sub-page or if sidebar buttons are missing
+            const needsButtons = !document.getElementById("pricing-source-button");
+
+            // If we are not on a valid page AND we don't need buttons, skip
+            if (!validPages.includes(hash) && !needsButtons) return;
+
+            isObserverLocked = true;
+            const p = profile("DOM Observer Update");
+            try {
                 if (hash === "#/add") {
                     addAddPageCheckboxes();
                 }
                 else if (hash === "#/manage") {
                     addManagePageCheckboxes();
                 }
+                // Always try to add buttons if they are missing, as long as we are in bazaar.php
                 addPricingSourceLink();
                 addBlackFridayToggle();
-                attachPriceFieldObservers();
-            }, 'DOM Observer')();
-        }, 100);
+                setupPriceDelegation();
+            } finally {
+                isObserverLocked = false;
+                p.end();
+            }
+        }, 150); // Reduced debounce slightly to feel more responsive while still batching
     });
 
-    const observeTarget = document.querySelector('#bazaarRoot') || document.body;
-    domObserver.observe(observeTarget, {
+    // Observe body to catch all relevant changes
+    domObserver.observe(document.body, {
         childList: true,
-        subtree: true
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'style'] // Added style to catch virtual scrolling updates
     });
 
     const initializeUI = safeExecute(() => {
-        debug("Initializing UI...");
+        const p = profile("Initialize UI");
         const hash = window.location.hash;
         if (hash === "#/add") {
             addAddPageCheckboxes();
@@ -1333,7 +1453,8 @@
         }
         addPricingSourceLink();
         addBlackFridayToggle();
-        attachPriceFieldObservers();
+        setupPriceDelegation();
+        p.end();
     }, 'Initialize UI');
 
     window.addEventListener('load', () => {
