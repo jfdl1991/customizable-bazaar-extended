@@ -1642,6 +1642,15 @@
       color: inherit;
       fill: currentColor;
   }
+  .bazaar-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+  .bazaar-table th, .bazaar-table td { padding: 6px 4px; border: 1px solid rgba(255,255,255,0.1); text-align: left; }
+  body:not(.dark-mode) .bazaar-table th, body:not(.dark-mode) .bazaar-table td { border: 1px solid #ddd; }
+  .bazaar-stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; font-size: 13px; }
+  .bazaar-stats-grid div { background: rgba(255,255,255,0.05); padding: 4px; border-radius: 4px; text-align: center; }
+  body:not(.dark-mode) .bazaar-stats-grid div { background: rgba(0,0,0,0.05); }
+  .bazaar-summary-line { margin-top: 8px; font-size: 12px; line-height: 1.4; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 6px; }
+  body:not(.dark-mode) .bazaar-summary-line { border-top: 1px solid #ccc; }
+  .bazaar-load-more { width: 100%; margin-top: 10px; padding: 8px !important; font-size: 13px !important; }
     `;
     $("<style>")
         .prop("type", "text/css")
@@ -1681,6 +1690,7 @@
     let lotSize = getValue("lotSize", 0);
     let moneyLimitEnabled = getValue("moneyLimitEnabled", false);
     let moneyLimitValue = getValue("moneyLimitValue", 0);
+    let showBazaarOnClick = getValue("showBazaarOnClick", false);
     const validPages = ["#/add", "#/manage"];
     let currentPage = window.location.hash;
     let itemMarketCache = {};
@@ -1711,6 +1721,144 @@
                 return id;
         }
         return null;
+    }
+
+    function calculateBazaarStats(listings) {
+        if (!listings || listings.length === 0) return { totalQty: 0, average: 0, median: 0 };
+
+        let totalQty = 0;
+        let totalPrice = 0;
+
+        // Sort by price for median calculation
+        const sortedListings = [...listings].sort((a, b) => Number(a.price) - Number(b.price));
+
+        for (const l of sortedListings) {
+            const qty = Number(l.quantity || l.amount || 0);
+            const price = Number(l.price || 0);
+            totalQty += qty;
+            totalPrice += (price * qty);
+        }
+
+        const average = totalQty > 0 ? Math.round(totalPrice / totalQty) : 0;
+
+        // Accurate median from frequency distribution
+        let median = 0;
+        if (totalQty > 0) {
+            const mid1 = Math.floor((totalQty + 1) / 2);
+            const mid2 = Math.floor((totalQty + 2) / 2);
+
+            let currentCount = 0;
+            let val1 = null;
+            let val2 = null;
+
+            for (const l of sortedListings) {
+                const qty = Number(l.quantity || l.amount || 0);
+                const price = Number(l.price || 0);
+                currentCount += qty;
+
+                if (val1 === null && currentCount >= mid1) val1 = price;
+                if (val2 === null && currentCount >= mid2) val2 = price;
+                if (val1 !== null && val2 !== null) break;
+            }
+            median = Math.round((val1 + val2) / 2);
+        }
+
+        return { totalQty, average, median };
+    }
+
+    async function showBazaarDataModal(itemId, itemName) {
+        if (!itemId) return;
+
+        // Show loading state using existing modal function
+        showCenterModalTip("Fetching bazaar data for " + itemName + "...", "Loading...");
+
+        try {
+            const data = await safeExecute(fetchWeav3rItemData, 'Fetch weav3r.dev Data')(itemId);
+            if (!data || !data.listings || data.listings.length === 0) {
+                showCenterModalTip("No bazaar listings available for this item on weav3r.dev", "No Data");
+                return;
+            }
+
+            let shownCount = 5;
+            const allListings = data.listings;
+
+            const updateModalContent = () => {
+                const currentListings = allListings.slice(0, shownCount);
+                const stats = calculateBazaarStats(currentListings);
+
+                const statsGrid = `
+                    <div class="bazaar-stats-grid">
+                        <div><b>Market Price</b><br>$${Number(data.market_price || 0).toLocaleString()}</div>
+                        <div><b>Bazaar Avg</b><br>$${Number(data.bazaar_average || 0).toLocaleString()}</div>
+                        <div><b>Total Lists</b><br>${Number(data.total_listings || 0).toLocaleString()}</div>
+                    </div>
+                `;
+
+                let tableRows = "";
+                for (const l of currentListings) {
+                    tableRows += `
+                        <tr>
+                            <td>$${Number(l.price).toLocaleString()}</td>
+                            <td>${Number(l.quantity || l.amount).toLocaleString()}</td>
+                            <td>${l.player_name || 'N/A'}</td>
+                        </tr>
+                    `;
+                }
+
+                const table = `
+                    <table class="bazaar-table">
+                        <thead>
+                            <tr><th>Price</th><th>Qty</th><th>Player</th></tr>
+                        </thead>
+                        <tbody>${tableRows}</tbody>
+                    </table>
+                `;
+
+                const summary = `
+                    <div class="bazaar-summary-line">
+                        <b>Current View Stats:</b><br>
+                        Total Qty Shown: ${stats.totalQty.toLocaleString()}<br>
+                        Weighted Avg: $${stats.average.toLocaleString()}<br>
+                        Median: $${stats.median.toLocaleString()}
+                    </div>
+                `;
+
+                const loadMoreBtn = shownCount < allListings.length
+                    ? `<button class="bazaar-load-more" id="bazaar-btn-load-more">Show 5 More Bazaar Listings</button>`
+                    : "";
+
+                const content = `
+                    ${statsGrid}
+                    <div style="max-height: 250px; overflow-y: auto; margin-top:10px;">
+                        ${table}
+                    </div>
+                    ${summary}
+                    ${loadMoreBtn}
+                `;
+
+                // Update the existing modal
+                let modal = document.getElementById('bf-center-tip');
+                if (modal) {
+                    modal.querySelector('.bf-tip-title').textContent = "Bazaar Info: " + itemName;
+                    modal.querySelector('.bf-tip-content').innerHTML = content;
+
+                    const btn = document.getElementById('bazaar-btn-load-more');
+                    if (btn) {
+                        btn.onclick = (e) => {
+                            e.preventDefault();
+                            shownCount = Math.min(shownCount + 5, allListings.length);
+                            updateModalContent();
+                        };
+                    }
+                }
+            };
+
+            updateModalContent();
+
+        } catch (e) {
+            console.error("Error in Bazaar Data Modal:", e);
+            showCenterModalTip("Failed to fetch data from weav3r.dev. Check your internet connection or if the item exists.", "Error");
+        }
     }
     function getPriceColor(listedPrice, marketValue) {
         if (marketValue <= 0)
@@ -2396,6 +2544,14 @@
                       </div>
                   </div>
 
+                  <div class="settings-row" style="align-items:center;">
+                      <div style="min-width:120px"><input id="show-bazaar-on-click" type="checkbox" ${showBazaarOnClick ? "checked":""}></div>
+                      <div style="flex:1;display:flex;align-items:center;gap:8px">
+                          <div>Show Bazaar info on checkbox click</div>
+                          <span class="bf-help-placeholder-bazaar-info"></span>
+                      </div>
+                  </div>
+
                   <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px">
                     <button id="settings-refresh-items" style="padding:6px 10px; font-size:12px; opacity:0.8">Refresh Item Data</button>
                     <div>
@@ -2462,6 +2618,12 @@
         const phQuantity = $overlay.find(".bf-help-placeholder-quantity");
         phQuantity.each(function(){
             const text = "This option helps you control how many of each item you list. Here's how they work together:\n1. First, the script checks the \"Always keep at least\" setting. If you have 100 plushies and want to keep 10, it will only consider listing 90.\n2. Next, it calculates the price and checks the \"Limit total value\" setting. If your 90 plushies are priced at $10,000 each and you set a limit of $500,000, it will only list 50 ($500,000 / $10,000).\n3. Finally, it applies the \"Max items to list (lot cap).\" If you set a lot cap of 25, it will reduce the quantity from 50 to 25.\nThe script always lists the lowest quantity calculated from these rules.";
+            $(this).replaceWith(createTooltipElement(text));
+        });
+
+        const phBazaarInfo = $overlay.find(".bf-help-placeholder-bazaar-info");
+        phBazaarInfo.each(function(){
+            const text = "When enabled, clicking an item's checkbox will open a floating window showing the 5 cheapest bazaar listings from weav3r.dev, along with market stats (average, median, etc.).";
             $(this).replaceWith(createTooltipElement(text));
         });
 
@@ -2537,6 +2699,7 @@
             clampMinIMEnabled = $("#im-clamp-enabled").is(":checked");
             clampMinIMPercent = Number($("#im-clamp-percent").val() || 0) || 0;
             lockCityBetter = $("#lock-city-better").is(":checked");
+            showBazaarOnClick = $("#show-bazaar-on-click").is(":checked");
             
             setValue("tornApiKey", apiKey);
             setValue("pricingSource", pricingSource);
@@ -2559,6 +2722,7 @@
             setValue("clampMinIMEnabled", clampMinIMEnabled);
             setValue("clampMinIMPercent", clampMinIMPercent);
             setValue("lockCityBetter", lockCityBetter);
+            setValue("showBazaarOnClick", showBazaarOnClick);
 
             $overlay.remove();
         });
@@ -2696,6 +2860,7 @@
             class: "item-toggle",
             click: safeExecute(async function (e) {
                 e.stopPropagation();
+                const isManualSelection = true;
                 if (!getValue("tornApiKey", "")) {
                     const error = new Error("No API key set");
                     error.userMessage = "No Torn API key set. Please click the 'Bazaar Filler Settings' button to enter your API key.";
@@ -2703,7 +2868,22 @@
                     openSettingsModal();
                     throw error;
                 }
-                await updateFunction.call(this, e, true);
+
+                if (showBazaarOnClick && isManualSelection && this.checked) {
+                    const $row = $(this).closest('li.clearfix, [class*="item___"]');
+                    let itemName = "";
+                    if ($row.is('li.clearfix')) {
+                        itemName = $row.find(".name-wrap span.t-overflow").text().trim();
+                    } else {
+                        itemName = $row.find('[class*="desc___"] b').text().trim();
+                    }
+                    const itemId = getItemIdByName(itemName);
+                    if (itemId) {
+                        showBazaarDataModal(itemId, itemName);
+                    }
+                }
+
+                await updateFunction.call(this, e, isManualSelection);
             }, context),
         });
     }
