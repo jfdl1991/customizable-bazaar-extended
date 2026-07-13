@@ -176,6 +176,9 @@
     let lockCityBetter = getValue("lockCityBetter", false);
     let clampMinIMEnabled = getValue("clampMinIMEnabled", false);
     let clampMinIMPercent = getValue("clampMinIMPercent", 5);
+    let clampMinRRPEnabled = getValue("clampMinRRPEnabled", false);
+    let clampMinRRPPercent = getValue("clampMinRRPPercent", 5);
+    let showCalculationBreakdown = getValue("showCalculationBreakdown", false);
     let blackFridayMode = getValue("blackFridayMode", false);
     let keepMinEnabled = getValue("keepMinEnabled", false);
     let keepMinCount = getValue("keepMinCount", 1);
@@ -189,6 +192,12 @@
     let itemMarketCache = {};
     let weav3rItemCache = {};
     let cachedTornItems = {};
+
+    function cleanItemName(name) {
+        if (!name) return "";
+        // Remove " x123" at the end of the name
+        return name.replace(/\s+x\d+$/, "").trim();
+    }
 
     function updateCachedItems() {
         const p = profile("updateCachedItems");
@@ -259,7 +268,7 @@
         return { totalQty, average, median };
     }
 
-    async function showBazaarDataModal(itemId, itemName) {
+    async function showBazaarDataModal(itemId, itemName, calculationBreakdown = null) {
         if (!itemId) return;
         
         // Show loading state using existing modal function
@@ -279,9 +288,33 @@
                 const currentListings = allListings.slice(0, shownCount);
                 const stats = calculateBazaarStats(currentListings);
                 
+                let breakdownHtml = "";
+                if (showCalculationBreakdown && calculationBreakdown && calculationBreakdown.breakdown) {
+                    const b = calculationBreakdown.breakdown.base;
+                    let baseInfo = `Base: ${b.source}`;
+                    if (b.listingIndex) baseInfo += ` #${b.listingIndex} ($${b.rawPrice.toLocaleString()})`;
+                    baseInfo += ` &rarr; <b>$${b.price.toLocaleString()}</b>`;
+
+                    let clampsInfo = "";
+                    if (calculationBreakdown.breakdown.clamps && calculationBreakdown.breakdown.clamps.length > 0) {
+                        clampsInfo = "<div style='font-size:11px; color:#aaa; margin-top:2px;'>Clamps: " +
+                            calculationBreakdown.breakdown.clamps.map(c => `${c.name} ($${c.value.toLocaleString()})`).join(", ") +
+                            "</div>";
+                    }
+
+                    breakdownHtml = `
+                        <div style="background:rgba(0,0,0,0.2); padding:8px; border-radius:6px; margin-bottom:10px; border:1px solid rgba(255,255,255,0.1); font-size:12px;">
+                            <div style="font-weight:bold; color:#7ed6df; margin-bottom:4px;">Price Calculation Breakdown:</div>
+                            <div>${baseInfo}</div>
+                            ${clampsInfo}
+                            <div style="margin-top:4px; border-top:1px solid rgba(255,255,255,0.1); padding-top:4px;">Final Price: <b style="color:#badc58;">$${calculationBreakdown.price.toLocaleString()}</b></div>
+                        </div>
+                    `;
+                }
+
                 const statsGrid = `
                     <div class="bazaar-stats-grid">
-                        <div><b>Market Price</b><br>$${Number(data.market_price || 0).toLocaleString()}</div>
+                        <div><b>Market Value (RRP)</b><br>$${Number(data.market_price || 0).toLocaleString()}</div>
                         <div><b>Bazaar Avg</b><br>$${Number(data.bazaar_average || 0).toLocaleString()}</div>
                         <div><b>Total Lists</b><br>${Number(data.total_listings || 0).toLocaleString()}</div>
                     </div>
@@ -321,6 +354,7 @@
                     : "";
 
                 const content = `
+                    ${breakdownHtml}
                     ${statsGrid}
                     <div style="max-height: 250px; overflow-y: auto; margin-top:10px;">
                         ${table}
@@ -454,11 +488,11 @@
         let $row = $priceInput.closest("li.clearfix");
         let itemName = "";
         if ($row.length) {
-            itemName = $row.find(".name-wrap span.t-overflow").text().trim();
+            itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
         }
         else {
             $row = $priceInput.closest('[class*="item___"]');
-            itemName = $row.length ? $row.find('[class*="desc___"] b').text().trim() : "";
+            itemName = $row.length ? cleanItemName($row.find('[class*="desc___"] b').text()) : "";
         }
         if (!itemName)
             return;
@@ -506,55 +540,53 @@
             return null;
         }
 
+        let basePrice = 0;
+        let breakdown = {
+            base: { source: pricingSource, price: 0 },
+            clamps: []
+        };
+        let listings = null;
+
         if (pricingSource === "Market Value") {
             const mv = Number(matchedItem.market_value);
-            let finalPrice = mv;
+            let price = mv;
             if (marketMarginType === "absolute") {
-                finalPrice += Number(marketMarginOffset);
+                price += Number(marketMarginOffset);
             } else if (marketMarginType === "percentage") {
-                finalPrice = Math.round(mv * (1 + Number(marketMarginOffset) / 100));
+                price = Math.round(mv * (1 + Number(marketMarginOffset) / 100));
             }
-            return { price: finalPrice, marketValue: mv };
-        }
-
-        if (pricingSource === "Item Market" && itemId) {
+            basePrice = price;
+            breakdown.base.price = basePrice;
+        } else if (pricingSource === "Item Market" && itemId) {
             debug(`Calculating price via Item Market for ${itemName} (${itemId})`);
             const data = await safeExecute(fetchItemMarketData, 'Fetch Item Market Data')(itemId);
             if (!data || !data.itemmarket?.listings?.length) return null;
 
-            const listings = data.itemmarket.listings;
+            listings = data.itemmarket.listings;
             const baseIndex = Math.min(itemMarketListing - 1, listings.length - 1);
             const listingPrice = Number(listings[baseIndex].price);
 
-            let finalPrice;
+            let price;
             if (itemMarketMarginType === "absolute") {
-                finalPrice = listingPrice + Number(itemMarketOffset);
+                price = listingPrice + Number(itemMarketOffset);
             } else if (itemMarketMarginType === "percentage") {
-                finalPrice = Math.round(listingPrice * (1 + Number(itemMarketOffset) / 100));
+                price = Math.round(listingPrice * (1 + Number(itemMarketOffset) / 100));
             } else {
-                finalPrice = listingPrice;
+                price = listingPrice;
             }
+            basePrice = price;
+            breakdown.base.price = basePrice;
+            breakdown.base.listingIndex = itemMarketListing;
+            breakdown.base.rawPrice = listingPrice;
 
             if (itemMarketClamp && matchedItem.market_value) {
-                finalPrice = Math.max(finalPrice, Number(matchedItem.market_value));
-            }
-
-            if (clampMinIMEnabled) {
-                const lowest = await getLowestItemMarketPrice(itemId);
-                if (lowest !== null && !isNaN(Number(lowest))) {
-                    const minAllowed = Math.round(Number(lowest) * (1 - (clampMinIMPercent / 100)));
-                    finalPrice = Math.max(finalPrice, minAllowed);
+                const mv = Number(matchedItem.market_value);
+                if (basePrice < mv) {
+                    basePrice = mv;
+                    breakdown.clamps.push({ name: "Market Value (RRP) Clamp", value: mv });
                 }
             }
-
-            return {
-                price: finalPrice,
-                marketValue: Number(matchedItem.market_value),
-                listings: listings.slice(0, 5)
-            };
-        }
-
-        if (pricingSource === "Bazaars/weav3r.dev") {
+        } else if (pricingSource === "Bazaars/weav3r.dev") {
             if (!itemId) {
                 debug(`No item ID for ${itemName}, cannot fetch weav3r.dev data`);
                 return null;
@@ -564,34 +596,60 @@
             const itemData = await safeExecute(fetchWeav3rItemData, 'Fetch weav3r.dev Item Data')(itemId);
             if (!itemData || !itemData.listings || itemData.listings.length === 0) return null;
 
+            listings = itemData.listings;
             const baseIndex = Math.min(bazaarListing - 1, itemData.listings.length - 1);
-            const basePrice = Number(itemData.listings[baseIndex].price);
+            const basePriceFromBazaar = Number(itemData.listings[baseIndex].price);
 
-            let finalPrice;
+            let price;
             if (bazaarMarginType === "absolute") {
-                finalPrice = basePrice + Number(bazaarMarginOffset);
+                price = basePriceFromBazaar + Number(bazaarMarginOffset);
             } else if (bazaarMarginType === "percentage") {
-                finalPrice = Math.round(basePrice * (1 + Number(bazaarMarginOffset) / 100));
+                price = Math.round(basePriceFromBazaar * (1 + Number(bazaarMarginOffset) / 100));
             } else {
-                finalPrice = basePrice;
+                price = basePriceFromBazaar;
             }
+            basePrice = price;
+            breakdown.base.price = basePrice;
+            breakdown.base.listingIndex = bazaarListing;
+            breakdown.base.rawPrice = basePriceFromBazaar;
 
             if (bazaarClamp && matchedItem.market_value) {
-                finalPrice = Math.max(finalPrice, Number(matchedItem.market_value));
-            }
-
-            if (clampMinIMEnabled && itemId) {
-                const lowest = await getLowestItemMarketPrice(itemId);
-                if (lowest !== null && !isNaN(Number(lowest))) {
-                    const minAllowed = Math.round(Number(lowest) * (1 - (clampMinIMPercent / 100)));
-                    finalPrice = Math.max(finalPrice, minAllowed);
+                const mv = Number(matchedItem.market_value);
+                if (basePrice < mv) {
+                    basePrice = mv;
+                    breakdown.clamps.push({ name: "Market Value (RRP) Clamp", value: mv });
                 }
             }
-
-            return { price: finalPrice, marketValue: Number(matchedItem.market_value) };
         }
 
-        return null;
+        let finalPrice = basePrice;
+
+        if (clampMinIMEnabled && itemId) {
+            const lowest = await getLowestItemMarketPrice(itemId);
+            if (lowest !== null && !isNaN(Number(lowest))) {
+                const minAllowed = Math.round(Number(lowest) * (1 - (Number(clampMinIMPercent) / 100)));
+                if (finalPrice < minAllowed) {
+                    finalPrice = minAllowed;
+                    breakdown.clamps.push({ name: `Item Market - ${clampMinIMPercent}%`, value: minAllowed });
+                }
+            }
+        }
+
+        if (clampMinRRPEnabled && matchedItem.market_value) {
+            const mv = Number(matchedItem.market_value);
+            const minAllowed = Math.round(mv * (1 - (Number(clampMinRRPPercent) / 100)));
+            if (finalPrice < minAllowed) {
+                finalPrice = minAllowed;
+                breakdown.clamps.push({ name: `Market Value - ${clampMinRRPPercent}%`, value: minAllowed });
+            }
+        }
+
+        return {
+            price: finalPrice,
+            marketValue: Number(matchedItem.market_value),
+            listings: listings ? listings.slice(0, 5) : null,
+            breakdown: breakdown
+        };
     }
 
     function parseShortNumber(input) {
@@ -669,7 +727,7 @@
         if (!$priceInput.data("orig"))
             $priceInput.data("orig", $priceInput.val());
 
-        const itemName = $row.find(".name-wrap span.t-overflow").text().trim();
+        const itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
         const priceData = await calculatePrice(itemName, itemId, matchedItem);
@@ -772,7 +830,7 @@
             return;
         }
 
-        const itemName = $row.find('[class*="desc___"] b').text().trim();
+        const itemName = cleanItemName($row.find('[class*="desc___"] b').text());
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
@@ -855,7 +913,7 @@
             return;
         }
 
-        const itemName = $row.find('[class*="desc___"] b').text().trim();
+        const itemName = cleanItemName($row.find('[class*="desc___"] b').text());
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
@@ -987,10 +1045,19 @@
                   <div id="clamp-to-im-percent" class="settings-row" style="align-items:center;">
                       <div style="min-width:120px"><input id="im-clamp-enabled" type="checkbox" ${clampMinIMEnabled ? "checked":""}></div>
                       <div style="flex:1;display:flex;align-items:center;gap:8px">
-                          <div>Clamp to Item Market minus</div>
+                          <div>Clamp to Item Market Price minus</div>
                           <input id="im-clamp-percent" type="number" class="compact-number-sm compact-input" value="${clampMinIMPercent}">
                           <div>%</div>
                           <span class="bf-help-placeholder2"></span>
+                      </div>
+                  </div>
+                  <div id="clamp-to-rrp-percent" class="settings-row" style="align-items:center;">
+                      <div style="min-width:120px"><input id="rrp-clamp-enabled" type="checkbox" ${clampMinRRPEnabled ? "checked":""}></div>
+                      <div style="flex:1;display:flex;align-items:center;gap:8px">
+                          <div>Clamp to Market Value (RRP) minus</div>
+                          <input id="rrp-clamp-percent" type="number" class="compact-number-sm compact-input" value="${clampMinRRPPercent}">
+                          <div>%</div>
+                          <span class="bf-help-placeholder-rrp-clamp"></span>
                       </div>
                   </div>
                   <div class="settings-row" style="align-items:center;">
@@ -1045,6 +1112,14 @@
                       </div>
                   </div>
 
+                  <div class="settings-row" style="align-items:center;">
+                      <div style="min-width:120px"><input id="show-breakdown" type="checkbox" ${showCalculationBreakdown ? "checked":""}></div>
+                      <div style="flex:1;display:flex;align-items:center;gap:8px">
+                          <div>Show calculation breakdown in Bazaar Info</div>
+                          <span class="bf-help-placeholder-breakdown"></span>
+                      </div>
+                  </div>
+
                   <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px">
                     <button id="settings-refresh-items" style="padding:6px 10px; font-size:12px; opacity:0.8">Refresh Item Data</button>
                     <div>
@@ -1075,7 +1150,7 @@
 
         const phPricing = $overlay.find(".bf-help-placeholder-pricing");
         phPricing.each(function(){
-            const text = "Select the source for the base price of your items.\n\n- Market Value: Uses Torn's official Market Value. This is a good general-purpose option, but may not always reflect the most current market prices.\n\n- Item Market: Uses the prices from the official Item Market. This is generally more up-to-date than Market Value, but is subject to market manipulation and may not be the best option for all items.\n\n- Bazaars/weav3r.dev: Uses data from weav3r.dev, which aggregates prices from multiple players' bazaars.";
+            const text = "Select the source for the base price of your items.\n\n- Market Value (RRP): Uses Torn's official Market Value. This is a good general-purpose option, but may not always reflect the most current market prices.\n\n- Item Market Price: Uses the prices from the official Item Market (what players are actually charging). This is generally more up-to-date than Market Value, but is subject to market manipulation and may not be the best option for all items.\n\n- Bazaars/weav3r.dev: Uses data from weav3r.dev, which aggregates prices from multiple players' bazaars.";
             $(this).replaceWith(createTooltipElement(text));
         });
 
@@ -1100,7 +1175,11 @@
         const ph1 = $overlay.find(".bf-help-placeholder");
         ph1.each(function(){ $(this).replaceWith(createTooltipElement("When checked, this option ensures that your item's price will not be set below its Market Value, even if the calculated price (based on your other settings) is lower.")); });
         const ph2 = $overlay.find(".bf-help-placeholder2");
-        ph2.each(function(){ $(this).replaceWith(createTooltipElement("When checked, this option ensures that your item's price will not be set below a certain percentage of the cheapest item on the market. This is useful for making sure your items are always competitively priced, while still accounting for the 5% fee that is charged when selling on the Item Market.\n\nExample: If the cheapest item on the market is $1,000 and you set the percentage to 5%, your price will not be set below $950.")); });
+        ph2.each(function(){ $(this).replaceWith(createTooltipElement("When checked, this option ensures that your item's price will not be set below a certain percentage of the cheapest item on the Item Market (what players are currently charging). This is useful for making sure your items are always competitively priced, while still accounting for the 5% fee that is charged when selling on the Item Market.\n\nExample: If the cheapest item on the market is $1,000 and you set the percentage to 5%, your price will not be set below $950.")); });
+
+        const phRRPClamp = $overlay.find(".bf-help-placeholder-rrp-clamp");
+        phRRPClamp.each(function(){ $(this).replaceWith(createTooltipElement("When checked, this option ensures that your item's price will not be set below a certain percentage of its Market Value (RRP). This is useful to avoid selling items too cheap if the Item Market crashes or is manipulated.\n\nExample: If the Market Value (RRP) is $1,000 and you set the percentage to 5%, your price will not be set below $950.")); });
+
         const ph3 = $overlay.find(".bf-help-placeholder3");
         ph3.each(function(){ $(this).replaceWith(createTooltipElement("When checked, this option will ensure that you always keep a certain number of items in your inventory. This is useful for items that you use frequently, or for items that you want to keep in stock for your bazaar.\n\nExample: If you have 100 of a plushie and you set this value to 10, the script will only list 90 of them for sale.")); });
         const ph4 = $overlay.find(".bf-help-placeholder4");
@@ -1117,6 +1196,12 @@
         const phBazaarInfo = $overlay.find(".bf-help-placeholder-bazaar-info");
         phBazaarInfo.each(function(){
             const text = "When enabled, clicking an item's checkbox will open a floating window showing the 5 cheapest bazaar listings from weav3r.dev, along with market stats (average, median, etc.).";
+            $(this).replaceWith(createTooltipElement(text));
+        });
+
+        const phBreakdown = $overlay.find(".bf-help-placeholder-breakdown");
+        phBreakdown.each(function(){
+            const text = "When enabled, the Bazaar Info modal will include a breakdown of how the final price was calculated, including the base price and any clamps applied.";
             $(this).replaceWith(createTooltipElement(text));
         });
 
@@ -1191,6 +1276,9 @@
 
             clampMinIMEnabled = $("#im-clamp-enabled").is(":checked");
             clampMinIMPercent = Number($("#im-clamp-percent").val() || 0) || 0;
+            clampMinRRPEnabled = $("#rrp-clamp-enabled").is(":checked");
+            clampMinRRPPercent = Number($("#rrp-clamp-percent").val() || 0) || 0;
+            showCalculationBreakdown = $("#show-breakdown").is(":checked");
             lockCityBetter = $("#lock-city-better").is(":checked");
             showBazaarOnClick = $("#show-bazaar-on-click").is(":checked");
             
@@ -1214,6 +1302,9 @@
             setValue("moneyLimitValue", moneyLimitValue);
             setValue("clampMinIMEnabled", clampMinIMEnabled);
             setValue("clampMinIMPercent", clampMinIMPercent);
+            setValue("clampMinRRPEnabled", clampMinRRPEnabled);
+            setValue("clampMinRRPPercent", clampMinRRPPercent);
+            setValue("showCalculationBreakdown", showCalculationBreakdown);
             setValue("lockCityBetter", lockCityBetter);
             setValue("showBazaarOnClick", showBazaarOnClick);
 
@@ -1362,21 +1453,27 @@
                     throw error;
                 }
 
+                let priceDataForModal = null;
+                const $row = $(this).closest('li.clearfix, [class*="item___"]');
+                let itemName = "";
+                if ($row.is('li.clearfix')) {
+                    itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
+                } else {
+                    itemName = cleanItemName($row.find('[class*="desc___"] b').text());
+                }
+                const itemId = getItemIdByName(itemName);
+                const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
+
+                // Run update first to get price data if needed
+                await updateFunction.call(this, e, isManualSelection);
+
                 if (showBazaarOnClick && isManualSelection && this.checked) {
-                    const $row = $(this).closest('li.clearfix, [class*="item___"]');
-                    let itemName = "";
-                    if ($row.is('li.clearfix')) {
-                        itemName = $row.find(".name-wrap span.t-overflow").text().trim();
-                    } else {
-                        itemName = $row.find('[class*="desc___"] b').text().trim();
-                    }
-                    const itemId = getItemIdByName(itemName);
                     if (itemId) {
-                        showBazaarDataModal(itemId, itemName);
+                        // Re-calculate or use cached if we want, but calculatePrice is relatively fast
+                        priceDataForModal = await calculatePrice(itemName, itemId, matchedItem);
+                        showBazaarDataModal(itemId, itemName, priceDataForModal);
                     }
                 }
-
-                await updateFunction.call(this, e, isManualSelection);
             }, context),
         });
     }
