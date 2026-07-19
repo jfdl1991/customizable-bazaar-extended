@@ -192,8 +192,12 @@
 
     function cleanItemName(name) {
         if (!name) return "";
+        let cleaned = name.trim();
         // Remove quantity suffix at the end of the item name (e.g., " x2", " x10")
-        return name.replace(/\s+x\d+$/, "").trim();
+        cleaned = cleaned.replace(/\s+x\d+$/, "");
+        // Remove quantity prefix at the start of the item name (e.g., "x2 ", "x10 ")
+        cleaned = cleaned.replace(/^x\d+\s+/, "");
+        return cleaned.trim();
     }
 
     function updateCachedItems() {
