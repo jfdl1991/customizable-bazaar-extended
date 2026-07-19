@@ -190,6 +190,12 @@
     let weav3rItemCache = {};
     let cachedTornItems = {};
 
+    function cleanItemName(name) {
+        if (!name) return "";
+        // Remove quantity suffix at the end of the item name (e.g., " x2", " x10")
+        return name.replace(/\s+x\d+$/, "").trim();
+    }
+
     function updateCachedItems() {
         const p = profile("updateCachedItems");
         const stored = localStorage.getItem("tornItems");
@@ -454,11 +460,11 @@
         let $row = $priceInput.closest("li.clearfix");
         let itemName = "";
         if ($row.length) {
-            itemName = $row.find(".name-wrap span.t-overflow").text().trim();
+            itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
         }
         else {
             $row = $priceInput.closest('[class*="item___"]');
-            itemName = $row.length ? $row.find('[class*="desc___"] b').text().trim() : "";
+            itemName = $row.length ? cleanItemName($row.find('[class*="desc___"] b').text()) : "";
         }
         if (!itemName)
             return;
@@ -669,7 +675,7 @@
         if (!$priceInput.data("orig"))
             $priceInput.data("orig", $priceInput.val());
 
-        const itemName = $row.find(".name-wrap span.t-overflow").text().trim();
+        const itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
         const priceData = await calculatePrice(itemName, itemId, matchedItem);
@@ -772,7 +778,7 @@
             return;
         }
 
-        const itemName = $row.find('[class*="desc___"] b').text().trim();
+        const itemName = cleanItemName($row.find('[class*="desc___"] b').text());
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
@@ -855,7 +861,7 @@
             return;
         }
 
-        const itemName = $row.find('[class*="desc___"] b').text().trim();
+        const itemName = cleanItemName($row.find('[class*="desc___"] b').text());
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
@@ -1366,9 +1372,9 @@
                     const $row = $(this).closest('li.clearfix, [class*="item___"]');
                     let itemName = "";
                     if ($row.is('li.clearfix')) {
-                        itemName = $row.find(".name-wrap span.t-overflow").text().trim();
+                        itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
                     } else {
-                        itemName = $row.find('[class*="desc___"] b').text().trim();
+                        itemName = cleanItemName($row.find('[class*="desc___"] b').text());
                     }
                     const itemId = getItemIdByName(itemName);
                     if (itemId) {
