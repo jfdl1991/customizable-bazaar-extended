@@ -569,10 +569,13 @@
                 let finalPrice;
                 if (itemMarketMarginType === "absolute") {
                     finalPrice = listingPrice + Number(itemMarketOffset);
+                    debug(`[Item Market Detail] Selected listing index: ${itemMarketListing} (Base Price: ${listingPrice}), Offset: ${itemMarketOffset} absolute. Calculated Price = ${finalPrice}`);
                 } else if (itemMarketMarginType === "percentage") {
                     finalPrice = Math.round(listingPrice * (1 + Number(itemMarketOffset) / 100));
+                    debug(`[Item Market Detail] Selected listing index: ${itemMarketListing} (Base Price: ${listingPrice}), Offset: ${itemMarketOffset}%. Calculated Price = ${finalPrice}`);
                 } else {
                     finalPrice = listingPrice;
+                    debug(`[Item Market Detail] Selected listing index: ${itemMarketListing} (Base Price: ${listingPrice}), No Offset. Calculated Price = ${finalPrice}`);
                 }
                 basePrice = finalPrice;
             }
@@ -588,10 +591,13 @@
                 let finalPrice;
                 if (bazaarMarginType === "absolute") {
                     finalPrice = basePriceVal + Number(bazaarMarginOffset);
+                    debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), Offset: ${bazaarMarginOffset} absolute. Calculated Price = ${finalPrice}`);
                 } else if (bazaarMarginType === "percentage") {
                     finalPrice = Math.round(basePriceVal * (1 + Number(bazaarMarginOffset) / 100));
+                    debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), Offset: ${bazaarMarginOffset}%. Calculated Price = ${finalPrice}`);
                 } else {
                     finalPrice = basePriceVal;
+                    debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), No Offset. Calculated Price = ${finalPrice}`);
                 }
                 basePrice = finalPrice;
             }
@@ -1177,38 +1183,6 @@
             return btn;
         }
 
-    function createListingsButton(listings) {
-        const listingsText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} x${x.amount}`).join("\n");
-        const btn = document.createElement('div');
-        btn.className = 'bf-listings-btn';
-        btn.textContent = 'i';
-        btn.dataset.tip = listingsText;
-
-        const showModal = (e) => {
-            e.stopPropagation();
-            const formattedText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} (x${x.amount.toLocaleString("en-US")})`).join("<br>");
-            showCenterModalTip(formattedText, "Cheapest Market Listings");
-        };
-
-        const showTip = () => {
-            if (!('ontouchstart' in window) && window.innerWidth >= 720) {
-                showBubble(btn.getBoundingClientRect(), listingsText);
-            }
-        };
-
-        const hideTip = () => {
-            if (!('ontouchstart' in window) && window.innerWidth >= 720) {
-                hideBubble();
-            }
-        };
-
-        btn.addEventListener('click', showModal);
-        btn.addEventListener('mouseenter', showTip);
-        btn.addEventListener('mouseleave', hideTip);
-
-        return btn;
-    }
-
         $("#settings-save").click(function () {
             var _a;
             apiKey = ((_a = $("#api-key-input").val()) === null || _a === void 0 ? void 0 : _a.trim()) || "";
@@ -1716,6 +1690,38 @@
         itemMarketCache = {};
         weav3rItemCache = {};
     });
+
+    function createListingsButton(listings) {
+        const listingsText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} x${x.amount}`).join("\n");
+        const btn = document.createElement('div');
+        btn.className = 'bf-listings-btn';
+        btn.textContent = 'i';
+        btn.dataset.tip = listingsText;
+
+        const showModal = (e) => {
+            e.stopPropagation();
+            const formattedText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} (x${x.amount.toLocaleString("en-US")})`).join("<br>");
+            showCenterModalTip(formattedText, "Cheapest Market Listings");
+        };
+
+        const showTip = () => {
+            if (!('ontouchstart' in window) && window.innerWidth >= 720) {
+                showBubble(btn.getBoundingClientRect(), listingsText);
+            }
+        };
+
+        const hideTip = () => {
+            if (!('ontouchstart' in window) && window.innerWidth >= 720) {
+                hideBubble();
+            }
+        };
+
+        btn.addEventListener('click', showModal);
+        btn.addEventListener('mouseenter', showTip);
+        btn.addEventListener('mouseleave', hideTip);
+
+        return btn;
+    }
 
     function copySidebarLinkClasses(linkEl, iconSpan, textSpan, linksContainer) {
         const refLink = linksContainer.querySelector("a[href]:not(#pricing-source-button):not(#black-friday-toggle)")
