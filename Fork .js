@@ -285,7 +285,7 @@
             let shownCount = 5;
             const allListings = data.listings;
             
-            const updateModalContent = () => {
+            function updateModalContent() {
                 const currentListings = allListings.slice(0, shownCount);
                 const stats = calculateBazaarStats(currentListings);
                 
@@ -368,7 +368,20 @@
                         };
                     }
                 }
-            };
+            }
+
+            // Asynchronously fetch priceData breakdown
+            if (!priceData) {
+                const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
+                if (matchedItem) {
+                    calculatePrice(itemName, itemId, matchedItem).then((calculated) => {
+                        priceData = calculated;
+                        updateModalContent(); // Re-render once resolved
+                    }).catch((err) => {
+                        debug("Error calculating price breakdown for modal:", err);
+                    });
+                }
+            }
 
             updateModalContent();
 
@@ -667,7 +680,7 @@
         return finalQty;
     }
 
-    async function updateAddRow($row, isChecked, isManual = false, priceData = null) {
+    async function updateAddRow($row, isChecked, isManual = false) {
         debug(`Updating 'Add' row. Checked: ${isChecked}, Manual: ${isManual}`);
         const $qtyInput = $row.find(".amount input").first();
         const $priceInput = $row.find(".price input").first();
@@ -708,9 +721,7 @@
         const itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
-        if (!priceData) {
-            priceData = await calculatePrice(itemName, itemId, matchedItem);
-        }
+        const priceData = await calculatePrice(itemName, itemId, matchedItem);
 
         let quantityToSell;
         if ($choiceCheckbox.length) {
@@ -771,7 +782,7 @@
             $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
-    async function updateManageRow($row, isChecked, isManual = false, priceData = null) {
+    async function updateManageRow($row, isChecked, isManual = false) {
         const $priceInput = $row.find('[class*="price___"] .input-money-group.success input.input-money').first();
         const $qtyInput = $row.find(".amount input").first();
 
@@ -814,9 +825,7 @@
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
-        if (!priceData) {
-            priceData = await calculatePrice(itemName, itemId, matchedItem);
-        }
+        const priceData = await calculatePrice(itemName, itemId, matchedItem);
         if (!priceData) return;
 
         const $toggle = $row.find(".item-toggle");
@@ -854,7 +863,7 @@
             $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
-    async function updateManageRowMobile($row, isChecked, isManual = false, priceData = null) {
+    async function updateManageRowMobile($row, isChecked, isManual = false) {
         const $priceInput = $row
             .find("[class*=bottomMobileMenu___] [class*=priceMobile___] .input-money-group.success input.input-money")
             .first();
@@ -899,9 +908,7 @@
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
-        if (!priceData) {
-            priceData = await calculatePrice(itemName, itemId, matchedItem);
-        }
+        const priceData = await calculatePrice(itemName, itemId, matchedItem);
         if (!priceData) return;
 
         const $toggle = $row.find(".item-toggle");
@@ -1404,29 +1411,21 @@
                     throw error;
                 }
 
-                let priceData = null;
-                const $row = $(this).closest('li.clearfix, [class*="item___"]');
-                let itemName = "";
-                if ($row.is('li.clearfix')) {
-                    itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
-                } else {
-                    itemName = cleanItemName($row.find('[class*="desc___"] b').text());
-                }
-                const itemId = getItemIdByName(itemName);
-                const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
-
-                if (itemId && matchedItem) {
-                    priceData = await calculatePrice(itemName, itemId, matchedItem);
-                }
-
-                // Call the updateFunction passing the pre-calculated priceData
-                await updateFunction.call(this, e, isManualSelection, priceData);
-
                 if (showBazaarOnClick && isManualSelection && this.checked) {
+                    const $row = $(this).closest('li.clearfix, [class*="item___"]');
+                    let itemName = "";
+                    if ($row.is('li.clearfix')) {
+                        itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
+                    } else {
+                        itemName = cleanItemName($row.find('[class*="desc___"] b').text());
+                    }
+                    const itemId = getItemIdByName(itemName);
                     if (itemId) {
-                        showBazaarDataModal(itemId, itemName, priceData);
+                        showBazaarDataModal(itemId, itemName);
                     }
                 }
+
+                await updateFunction.call(this, e, isManualSelection);
             }, context),
         });
     }
