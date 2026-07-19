@@ -269,7 +269,7 @@
         return { totalQty, average, median };
     }
 
-    async function showBazaarDataModal(itemId, itemName) {
+    async function showBazaarDataModal(itemId, itemName, priceData = null) {
         if (!itemId) return;
         
         // Show loading state using existing modal function
@@ -289,6 +289,19 @@
                 const currentListings = allListings.slice(0, shownCount);
                 const stats = calculateBazaarStats(currentListings);
                 
+                let breakdownHtml = "";
+                if (priceData) {
+                    breakdownHtml = `
+                        <div style="background: rgba(255,255,255,0.06); border-left: 3px solid #28a745; padding: 8px; border-radius: 4px; margin-bottom: 10px; font-size: 12px; line-height: 1.4; text-align: left;">
+                            <b>Pricing Breakdown:</b><br>
+                            - Source: <span style="color: #ff9f43;">${priceData.pricingSourceUsed}</span><br>
+                            - Base Calculated Price: <span style="font-weight: bold;">$${Number(priceData.basePrice || 0).toLocaleString()}</span><br>
+                            - Clamps: RRP Floor = $${Number(priceData.rrpClampValue || 0).toLocaleString()}, IM Floor = $${Number(priceData.imClampValue || 0).toLocaleString()}<br>
+                            - Final Applied Price: <span style="color: #28a745; font-weight: bold;">$${Number(priceData.price || 0).toLocaleString()}</span> ${priceData.clampApplied !== "None" ? `<br><span style="color: #ee5253; font-size: 11px;">(via ${priceData.clampApplied})</span>` : ""}
+                        </div>
+                    `;
+                }
+
                 const statsGrid = `
                     <div class="bazaar-stats-grid">
                         <div><b>Market Price</b><br>$${Number(data.market_price || 0).toLocaleString()}</div>
@@ -331,6 +344,7 @@
                     : "";
 
                 const content = `
+                    ${breakdownHtml}
                     ${statsGrid}
                     <div style="max-height: 250px; overflow-y: auto; margin-top:10px;">
                         ${table}
@@ -516,6 +530,11 @@
             return null;
         }
 
+        let basePrice = 0;
+        let pricingSourceUsed = pricingSource;
+        let weav3rListings = null;
+        let itemMarketListings = null;
+
         if (pricingSource === "Market Value") {
             const mv = Number(matchedItem.market_value);
             let finalPrice = mv;
@@ -524,84 +543,91 @@
             } else if (marketMarginType === "percentage") {
                 finalPrice = Math.round(mv * (1 + Number(marketMarginOffset) / 100));
             }
-            return { price: finalPrice, marketValue: mv };
+            basePrice = finalPrice;
         }
-
-        if (pricingSource === "Item Market" && itemId) {
+        else if (pricingSource === "Item Market" && itemId) {
             debug(`Calculating price via Item Market for ${itemName} (${itemId})`);
             const data = await safeExecute(fetchItemMarketData, 'Fetch Item Market Data')(itemId);
-            if (!data || !data.itemmarket?.listings?.length) return null;
+            if (data && data.itemmarket?.listings?.length) {
+                itemMarketListings = data.itemmarket.listings;
+                const baseIndex = Math.min(itemMarketListing - 1, itemMarketListings.length - 1);
+                const listingPrice = Number(itemMarketListings[baseIndex].price);
 
-            const listings = data.itemmarket.listings;
-            const baseIndex = Math.min(itemMarketListing - 1, listings.length - 1);
-            const listingPrice = Number(listings[baseIndex].price);
-
-            let finalPrice;
-            if (itemMarketMarginType === "absolute") {
-                finalPrice = listingPrice + Number(itemMarketOffset);
-            } else if (itemMarketMarginType === "percentage") {
-                finalPrice = Math.round(listingPrice * (1 + Number(itemMarketOffset) / 100));
-            } else {
-                finalPrice = listingPrice;
-            }
-
-            if (itemMarketClamp && matchedItem.market_value) {
-                finalPrice = Math.max(finalPrice, Number(matchedItem.market_value));
-            }
-
-            if (clampMinIMEnabled) {
-                const lowest = await getLowestItemMarketPrice(itemId);
-                if (lowest !== null && !isNaN(Number(lowest))) {
-                    const minAllowed = Math.round(Number(lowest) * (1 - (clampMinIMPercent / 100)));
-                    finalPrice = Math.max(finalPrice, minAllowed);
+                let finalPrice;
+                if (itemMarketMarginType === "absolute") {
+                    finalPrice = listingPrice + Number(itemMarketOffset);
+                } else if (itemMarketMarginType === "percentage") {
+                    finalPrice = Math.round(listingPrice * (1 + Number(itemMarketOffset) / 100));
+                } else {
+                    finalPrice = listingPrice;
                 }
+                basePrice = finalPrice;
             }
-
-            return {
-                price: finalPrice,
-                marketValue: Number(matchedItem.market_value),
-                listings: listings.slice(0, 5)
-            };
         }
-
-        if (pricingSource === "Bazaars/weav3r.dev") {
-            if (!itemId) {
-                debug(`No item ID for ${itemName}, cannot fetch weav3r.dev data`);
-                return null;
-            }
+        else if (pricingSource === "Bazaars/weav3r.dev" && itemId) {
             debug(`Calculating price via weav3r.dev for ${itemName} (${itemId})`);
-
             const itemData = await safeExecute(fetchWeav3rItemData, 'Fetch weav3r.dev Item Data')(itemId);
-            if (!itemData || !itemData.listings || itemData.listings.length === 0) return null;
+            if (itemData && itemData.listings && itemData.listings.length > 0) {
+                weav3rListings = itemData.listings;
+                const baseIndex = Math.min(bazaarListing - 1, weav3rListings.length - 1);
+                const basePriceVal = Number(weav3rListings[baseIndex].price);
 
-            const baseIndex = Math.min(bazaarListing - 1, itemData.listings.length - 1);
-            const basePrice = Number(itemData.listings[baseIndex].price);
-
-            let finalPrice;
-            if (bazaarMarginType === "absolute") {
-                finalPrice = basePrice + Number(bazaarMarginOffset);
-            } else if (bazaarMarginType === "percentage") {
-                finalPrice = Math.round(basePrice * (1 + Number(bazaarMarginOffset) / 100));
-            } else {
-                finalPrice = basePrice;
-            }
-
-            if (bazaarClamp && matchedItem.market_value) {
-                finalPrice = Math.max(finalPrice, Number(matchedItem.market_value));
-            }
-
-            if (clampMinIMEnabled && itemId) {
-                const lowest = await getLowestItemMarketPrice(itemId);
-                if (lowest !== null && !isNaN(Number(lowest))) {
-                    const minAllowed = Math.round(Number(lowest) * (1 - (clampMinIMPercent / 100)));
-                    finalPrice = Math.max(finalPrice, minAllowed);
+                let finalPrice;
+                if (bazaarMarginType === "absolute") {
+                    finalPrice = basePriceVal + Number(bazaarMarginOffset);
+                } else if (bazaarMarginType === "percentage") {
+                    finalPrice = Math.round(basePriceVal * (1 + Number(bazaarMarginOffset) / 100));
+                } else {
+                    finalPrice = basePriceVal;
                 }
+                basePrice = finalPrice;
             }
-
-            return { price: finalPrice, marketValue: Number(matchedItem.market_value) };
         }
 
-        return null;
+        // Evaluate floor clamps
+        let rrpClampValue = 0;
+        let imClampValue = 0;
+
+        // Clamp to Market Value (RRP)
+        const isRRPClampEnabled = (pricingSource === "Bazaars/weav3r.dev" && bazaarClamp) ||
+                                   (pricingSource === "Item Market" && itemMarketClamp);
+        if (isRRPClampEnabled && matchedItem.market_value) {
+            rrpClampValue = Number(matchedItem.market_value);
+        }
+
+        // Clamp to Item Market - X%
+        if (clampMinIMEnabled && itemId) {
+            const lowest = await getLowestItemMarketPrice(itemId);
+            if (lowest !== null && !isNaN(Number(lowest))) {
+                imClampValue = Math.round(Number(lowest) * (1 - (clampMinIMPercent / 100)));
+            }
+        }
+
+        // The final price is the MAXIMUM of the base price and any active clamps (as floors)
+        let finalPrice = basePrice;
+        let clampApplied = "None";
+
+        if (rrpClampValue > finalPrice) {
+            finalPrice = rrpClampValue;
+            clampApplied = `Market Value (RRP) Clamp ($${rrpClampValue.toLocaleString()})`;
+        }
+        if (imClampValue > finalPrice) {
+            finalPrice = imClampValue;
+            clampApplied = `Item Market - ${clampMinIMPercent}% Clamp ($${imClampValue.toLocaleString()})`;
+        }
+
+        debug(`Price calculation for ${itemName}: Base Price = ${basePrice}, RRP Clamp = ${rrpClampValue}, IM Clamp = ${imClampValue}. Final Price = ${finalPrice} (Clamp applied: ${clampApplied})`);
+
+        return {
+            price: finalPrice,
+            marketValue: Number(matchedItem.market_value),
+            basePrice: basePrice,
+            rrpClampValue: rrpClampValue,
+            imClampValue: imClampValue,
+            clampApplied: clampApplied,
+            pricingSourceUsed: pricingSourceUsed,
+            listings: weav3rListings ? weav3rListings.slice(0, 5) : (itemMarketListings ? itemMarketListings.slice(0, 5) : null)
+        };
     }
 
     function parseShortNumber(input) {
@@ -641,7 +667,7 @@
         return finalQty;
     }
 
-    async function updateAddRow($row, isChecked, isManual = false) {
+    async function updateAddRow($row, isChecked, isManual = false, priceData = null) {
         debug(`Updating 'Add' row. Checked: ${isChecked}, Manual: ${isManual}`);
         const $qtyInput = $row.find(".amount input").first();
         const $priceInput = $row.find(".price input").first();
@@ -682,7 +708,9 @@
         const itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
-        const priceData = await calculatePrice(itemName, itemId, matchedItem);
+        if (!priceData) {
+            priceData = await calculatePrice(itemName, itemId, matchedItem);
+        }
 
         let quantityToSell;
         if ($choiceCheckbox.length) {
@@ -743,7 +771,7 @@
             $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
-    async function updateManageRow($row, isChecked, isManual = false) {
+    async function updateManageRow($row, isChecked, isManual = false, priceData = null) {
         const $priceInput = $row.find('[class*="price___"] .input-money-group.success input.input-money').first();
         const $qtyInput = $row.find(".amount input").first();
 
@@ -786,7 +814,9 @@
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
-        const priceData = await calculatePrice(itemName, itemId, matchedItem);
+        if (!priceData) {
+            priceData = await calculatePrice(itemName, itemId, matchedItem);
+        }
         if (!priceData) return;
 
         const $toggle = $row.find(".item-toggle");
@@ -824,7 +854,7 @@
             $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
-    async function updateManageRowMobile($row, isChecked, isManual = false) {
+    async function updateManageRowMobile($row, isChecked, isManual = false, priceData = null) {
         const $priceInput = $row
             .find("[class*=bottomMobileMenu___] [class*=priceMobile___] .input-money-group.success input.input-money")
             .first();
@@ -869,7 +899,9 @@
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
-        const priceData = await calculatePrice(itemName, itemId, matchedItem);
+        if (!priceData) {
+            priceData = await calculatePrice(itemName, itemId, matchedItem);
+        }
         if (!priceData) return;
 
         const $toggle = $row.find(".item-toggle");
@@ -1372,21 +1404,29 @@
                     throw error;
                 }
 
-                if (showBazaarOnClick && isManualSelection && this.checked) {
-                    const $row = $(this).closest('li.clearfix, [class*="item___"]');
-                    let itemName = "";
-                    if ($row.is('li.clearfix')) {
-                        itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
-                    } else {
-                        itemName = cleanItemName($row.find('[class*="desc___"] b').text());
-                    }
-                    const itemId = getItemIdByName(itemName);
-                    if (itemId) {
-                        showBazaarDataModal(itemId, itemName);
-                    }
+                let priceData = null;
+                const $row = $(this).closest('li.clearfix, [class*="item___"]');
+                let itemName = "";
+                if ($row.is('li.clearfix')) {
+                    itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
+                } else {
+                    itemName = cleanItemName($row.find('[class*="desc___"] b').text());
+                }
+                const itemId = getItemIdByName(itemName);
+                const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
+
+                if (itemId && matchedItem) {
+                    priceData = await calculatePrice(itemName, itemId, matchedItem);
                 }
 
-                await updateFunction.call(this, e, isManualSelection);
+                // Call the updateFunction passing the pre-calculated priceData
+                await updateFunction.call(this, e, isManualSelection, priceData);
+
+                if (showBazaarOnClick && isManualSelection && this.checked) {
+                    if (itemId) {
+                        showBazaarDataModal(itemId, itemName, priceData);
+                    }
+                }
             }, context),
         });
     }
