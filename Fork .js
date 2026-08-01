@@ -189,6 +189,8 @@
     let itemMarketCache = {};
     let weav3rItemCache = {};
     let cachedTornItems = {};
+    const inFlightMarketRequests = {};
+    const inFlightWeav3rRequests = {};
 
     function cleanItemName(name) {
         if (!name) return "";
@@ -445,20 +447,35 @@
             debug("Returning cached Item Market data.");
             return itemMarketCache[itemId].data;
         }
+        if (inFlightMarketRequests[itemId]) {
+            debug(`Reusing in-flight Item Market request for item ID: ${itemId}`);
+            return inFlightMarketRequests[itemId];
+        }
+
         const url = `https://api.torn.com/v2/market/${itemId}/itemmarket?comment=wBazaarFiller`;
         debug("Fetching from URL:", url);
-        const res = await fetch(url, {
-            headers: { Authorization: "ApiKey " + apiKey },
-        });
-        const data = await res.json();
-        if (data.error) {
-            const error = new Error("Item Market API error: " + data.error.error);
-            error.userMessage = "Item Market API error: " + data.error.error;
-            throw error;
-        }
-        debug("Successfully fetched Item Market data, caching now.");
-        itemMarketCache[itemId] = { time: now, data };
-        return data;
+
+        const promise = (async () => {
+            try {
+                const res = await fetch(url, {
+                    headers: { Authorization: "ApiKey " + apiKey },
+                });
+                const data = await res.json();
+                if (data.error) {
+                    const error = new Error("Item Market API error: " + data.error.error);
+                    error.userMessage = "Item Market API error: " + data.error.error;
+                    throw error;
+                }
+                debug("Successfully fetched Item Market data, caching now.");
+                itemMarketCache[itemId] = { time: now, data };
+                return data;
+            } finally {
+                delete inFlightMarketRequests[itemId];
+            }
+        })();
+
+        inFlightMarketRequests[itemId] = promise;
+        return promise;
     }
     async function fetchWeav3rItemData(itemId) {
         debug(`Fetching weav3r.dev data for item ID: ${itemId}`);
@@ -467,7 +484,12 @@
             debug("Returning cached weav3r.dev data.");
             return weav3rItemCache[itemId].data;
         }
-        return new Promise((resolve, reject) => {
+        if (inFlightWeav3rRequests[itemId]) {
+            debug(`Reusing in-flight weav3r.dev request for item ID: ${itemId}`);
+            return inFlightWeav3rRequests[itemId];
+        }
+
+        const promise = new Promise((resolve, reject) => {
             const url = `https://weav3r.dev/api/marketplace/${itemId}`;
             debug("Fetching from URL:", url);
             GM_xmlhttpRequest({
@@ -475,16 +497,26 @@
                 url: url,
                 onload: function (response) {
                     debug("Successfully fetched weav3r.dev data, caching now.");
-                    const data = JSON.parse(response.responseText);
-                    weav3rItemCache[itemId] = { time: now, data };
-                    resolve(data);
+                    try {
+                        const data = JSON.parse(response.responseText);
+                        weav3rItemCache[itemId] = { time: now, data };
+                        resolve(data);
+                    } catch (e) {
+                        reject(e);
+                    } finally {
+                        delete inFlightWeav3rRequests[itemId];
+                    }
                 },
                 onerror: function (err) {
                     debug("Error fetching weav3r.dev data:", err);
+                    delete inFlightWeav3rRequests[itemId];
                     reject(new Error("Failed fetching weav3r.dev item data"));
                 },
             });
         });
+
+        inFlightWeav3rRequests[itemId] = promise;
+        return promise;
     }
     function updatePriceFieldColor($priceInput) {
         var _a;
@@ -744,7 +776,31 @@
         $row.find(".city-warning").remove();
         $toggle.removeClass("item-toggle-red");
 
-        if (lockCityBetter && matchedItem.city_price && priceData && Number(matchedItem.city_price) > priceData.price) {
+        // 1. Populate price input box first, so visual information is updated before any checks
+        if (blackFridayMode) {
+            $priceInput.val("1");
+            $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+            $priceInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
+        } else if (priceData) {
+            $priceInput.val(priceData.price.toLocaleString("en-US"));
+            $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+            $priceInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
+
+            if (priceData.marketValue) {
+                $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
+            }
+
+            if (priceData.listings) {
+                const $priceInputWrapper = $row.find(".price").first();
+                if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
+                    const listingsBtn = createListingsButton(priceData.listings);
+                    $priceInputWrapper.append(listingsBtn);
+                }
+            }
+        }
+
+        // 2. Evaluate lockCityBetter check
+        if (!blackFridayMode && lockCityBetter && matchedItem.city_price && priceData && Number(matchedItem.city_price) > priceData.price) {
             debug(`City price ($${matchedItem.city_price}) is better than calculated price ($${priceData.price}) for ${itemName}. Locking.`);
             quantityToSell = 0;
             $toggle.addClass("item-toggle-red");
@@ -758,35 +814,14 @@
             }
         }
 
+        // 3. Populate quantity input box
         if (quantityToSell !== undefined) {
             $qtyInput.val(quantityToSell);
             $qtyInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
         }
 
-        if (blackFridayMode) {
-            $priceInput.val("1");
-            $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
-            $priceInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
-            return;
-        }
-
+        if (blackFridayMode) return;
         if (!priceData) return;
-
-        if (priceData.listings) {
-            const $priceInputWrapper = $row.find(".price").first();
-            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
-                const listingsBtn = createListingsButton(priceData.listings);
-                $priceInputWrapper.append(listingsBtn);
-            }
-        }
-
-        $priceInput.val(priceData.price.toLocaleString("en-US"));
-        $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
-        $priceInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
-
-        if (priceData.marketValue) {
-            $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
-        }
     }
     async function updateManageRow($row, isChecked, isManual = false) {
         const $priceInput = $row.find('[class*="price___"] .input-money-group.success input.input-money').first();
@@ -838,6 +873,23 @@
         $row.find(".city-warning").remove();
         $toggle.removeClass("item-toggle-red");
 
+        // 1. Populate price input box first, so visual information is updated before any checks
+        $priceInput.val(priceData.price.toLocaleString("en-US"));
+        $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+
+        if (priceData.marketValue) {
+            $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
+        }
+
+        if (priceData.listings) {
+            const $priceInputWrapper = $row.find('[class*="price___"]').first();
+            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
+                const listingsBtn = createListingsButton(priceData.listings);
+                $priceInputWrapper.append(listingsBtn);
+            }
+        }
+
+        // 2. Evaluate lockCityBetter check
         if (lockCityBetter && matchedItem.city_price && Number(matchedItem.city_price) > priceData.price) {
             if ($qtyInput.length) {
                 $qtyInput.val("0");
@@ -852,21 +904,6 @@
             if (isChecked && isManual) {
                 showCenterModalTip(warningMsg, "City Shop Warning");
             }
-        }
-
-        if (priceData.listings) {
-            const $priceInputWrapper = $row.find('[class*="price___"]').first();
-            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
-                const listingsBtn = createListingsButton(priceData.listings);
-                $priceInputWrapper.append(listingsBtn);
-            }
-        }
-
-        $priceInput.val(priceData.price.toLocaleString("en-US"));
-        $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
-
-        if (priceData.marketValue) {
-            $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
     async function updateManageRowMobile($row, isChecked, isManual = false) {
@@ -921,6 +958,23 @@
         $row.find(".city-warning").remove();
         $toggle.removeClass("item-toggle-red");
 
+        // 1. Populate price input box first, so visual information is updated before any checks
+        $priceInput.val(priceData.price.toLocaleString("en-US"));
+        $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+
+        if (priceData.marketValue) {
+            $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
+        }
+
+        if (priceData.listings) {
+            const $priceInputWrapper = $row.find("[class*=priceMobile___]").first();
+            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
+                const listingsBtn = createListingsButton(priceData.listings);
+                $priceInputWrapper.append(listingsBtn);
+            }
+        }
+
+        // 2. Evaluate lockCityBetter check
         if (lockCityBetter && matchedItem.city_price && Number(matchedItem.city_price) > priceData.price) {
             if ($qtyInput.length) {
                 $qtyInput.val("0");
@@ -935,21 +989,6 @@
             if (isChecked && isManual) {
                 showCenterModalTip(warningMsg, "City Shop Warning");
             }
-        }
-
-        if (priceData.listings) {
-            const $priceInputWrapper = $row.find("[class*=priceMobile___]").first();
-            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
-                const listingsBtn = createListingsButton(priceData.listings);
-                $priceInputWrapper.append(listingsBtn);
-            }
-        }
-
-        $priceInput.val(priceData.price.toLocaleString("en-US"));
-        $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
-
-        if (priceData.marketValue) {
-            $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
 
