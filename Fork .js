@@ -189,6 +189,18 @@
     let itemMarketCache = {};
     let weav3rItemCache = {};
     let cachedTornItems = {};
+    const inFlightMarketRequests = {};
+    const inFlightWeav3rRequests = {};
+
+    function cleanItemName(name) {
+        if (!name) return "";
+        let cleaned = name.trim();
+        // Remove quantity suffix at the end of the item name (e.g., " x2", " x10")
+        cleaned = cleaned.replace(/\s+x\d+$/, "");
+        // Remove quantity prefix at the start of the item name (e.g., "x2 ", "x10 ")
+        cleaned = cleaned.replace(/^x\d+\s+/, "");
+        return cleaned.trim();
+    }
 
     function updateCachedItems() {
         const p = profile("updateCachedItems");
@@ -259,7 +271,7 @@
         return { totalQty, average, median };
     }
 
-    async function showBazaarDataModal(itemId, itemName) {
+    async function showBazaarDataModal(itemId, itemName, priceData = null) {
         if (!itemId) return;
         
         // Show loading state using existing modal function
@@ -275,10 +287,23 @@
             let shownCount = 5;
             const allListings = data.listings;
             
-            const updateModalContent = () => {
+            function updateModalContent() {
                 const currentListings = allListings.slice(0, shownCount);
                 const stats = calculateBazaarStats(currentListings);
                 
+                let breakdownHtml = "";
+                if (priceData) {
+                    breakdownHtml = `
+                        <div style="background: rgba(255,255,255,0.06); border-left: 3px solid #28a745; padding: 8px; border-radius: 4px; margin-bottom: 10px; font-size: 12px; line-height: 1.4; text-align: left;">
+                            <b>Pricing Breakdown:</b><br>
+                            - Source: <span style="color: #ff9f43;">${priceData.pricingSourceUsed}</span><br>
+                            - Base Calculated Price: <span style="font-weight: bold;">$${Number(priceData.basePrice || 0).toLocaleString()}</span><br>
+                            - Clamps: RRP Floor = $${Number(priceData.rrpClampValue || 0).toLocaleString()}, IM Floor = $${Number(priceData.imClampValue || 0).toLocaleString()}<br>
+                            - Final Applied Price: <span style="color: #28a745; font-weight: bold;">$${Number(priceData.price || 0).toLocaleString()}</span> ${priceData.clampApplied !== "None" ? `<br><span style="color: #ee5253; font-size: 11px;">(via ${priceData.clampApplied})</span>` : ""}
+                        </div>
+                    `;
+                }
+
                 const statsGrid = `
                     <div class="bazaar-stats-grid">
                         <div><b>Market Price</b><br>$${Number(data.market_price || 0).toLocaleString()}</div>
@@ -321,6 +346,7 @@
                     : "";
 
                 const content = `
+                    ${breakdownHtml}
                     ${statsGrid}
                     <div style="max-height: 250px; overflow-y: auto; margin-top:10px;">
                         ${table}
@@ -344,7 +370,20 @@
                         };
                     }
                 }
-            };
+            }
+
+            // Asynchronously fetch priceData breakdown
+            if (!priceData) {
+                const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
+                if (matchedItem) {
+                    calculatePrice(itemName, itemId, matchedItem).then((calculated) => {
+                        priceData = calculated;
+                        updateModalContent(); // Re-render once resolved
+                    }).catch((err) => {
+                        debug("Error calculating price breakdown for modal:", err);
+                    });
+                }
+            }
 
             updateModalContent();
 
@@ -408,20 +447,35 @@
             debug("Returning cached Item Market data.");
             return itemMarketCache[itemId].data;
         }
+        if (inFlightMarketRequests[itemId]) {
+            debug(`Reusing in-flight Item Market request for item ID: ${itemId}`);
+            return inFlightMarketRequests[itemId];
+        }
+
         const url = `https://api.torn.com/v2/market/${itemId}/itemmarket?comment=wBazaarFiller`;
         debug("Fetching from URL:", url);
-        const res = await fetch(url, {
-            headers: { Authorization: "ApiKey " + apiKey },
-        });
-        const data = await res.json();
-        if (data.error) {
-            const error = new Error("Item Market API error: " + data.error.error);
-            error.userMessage = "Item Market API error: " + data.error.error;
-            throw error;
-        }
-        debug("Successfully fetched Item Market data, caching now.");
-        itemMarketCache[itemId] = { time: now, data };
-        return data;
+
+        const promise = (async () => {
+            try {
+                const res = await fetch(url, {
+                    headers: { Authorization: "ApiKey " + apiKey },
+                });
+                const data = await res.json();
+                if (data.error) {
+                    const error = new Error("Item Market API error: " + data.error.error);
+                    error.userMessage = "Item Market API error: " + data.error.error;
+                    throw error;
+                }
+                debug("Successfully fetched Item Market data, caching now.");
+                itemMarketCache[itemId] = { time: now, data };
+                return data;
+            } finally {
+                delete inFlightMarketRequests[itemId];
+            }
+        })();
+
+        inFlightMarketRequests[itemId] = promise;
+        return promise;
     }
     async function fetchWeav3rItemData(itemId) {
         debug(`Fetching weav3r.dev data for item ID: ${itemId}`);
@@ -430,7 +484,12 @@
             debug("Returning cached weav3r.dev data.");
             return weav3rItemCache[itemId].data;
         }
-        return new Promise((resolve, reject) => {
+        if (inFlightWeav3rRequests[itemId]) {
+            debug(`Reusing in-flight weav3r.dev request for item ID: ${itemId}`);
+            return inFlightWeav3rRequests[itemId];
+        }
+
+        const promise = new Promise((resolve, reject) => {
             const url = `https://weav3r.dev/api/marketplace/${itemId}`;
             debug("Fetching from URL:", url);
             GM_xmlhttpRequest({
@@ -438,27 +497,37 @@
                 url: url,
                 onload: function (response) {
                     debug("Successfully fetched weav3r.dev data, caching now.");
-                    const data = JSON.parse(response.responseText);
-                    weav3rItemCache[itemId] = { time: now, data };
-                    resolve(data);
+                    try {
+                        const data = JSON.parse(response.responseText);
+                        weav3rItemCache[itemId] = { time: now, data };
+                        resolve(data);
+                    } catch (e) {
+                        reject(e);
+                    } finally {
+                        delete inFlightWeav3rRequests[itemId];
+                    }
                 },
                 onerror: function (err) {
                     debug("Error fetching weav3r.dev data:", err);
+                    delete inFlightWeav3rRequests[itemId];
                     reject(new Error("Failed fetching weav3r.dev item data"));
                 },
             });
         });
+
+        inFlightWeav3rRequests[itemId] = promise;
+        return promise;
     }
     function updatePriceFieldColor($priceInput) {
         var _a;
         let $row = $priceInput.closest("li.clearfix");
         let itemName = "";
         if ($row.length) {
-            itemName = $row.find(".name-wrap span.t-overflow").text().trim();
+            itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
         }
         else {
             $row = $priceInput.closest('[class*="item___"]');
-            itemName = $row.length ? $row.find('[class*="desc___"] b').text().trim() : "";
+            itemName = $row.length ? cleanItemName($row.find('[class*="desc___"] b').text()) : "";
         }
         if (!itemName)
             return;
@@ -506,6 +575,11 @@
             return null;
         }
 
+        let basePrice = 0;
+        let pricingSourceUsed = pricingSource;
+        let weav3rListings = null;
+        let itemMarketListings = null;
+
         if (pricingSource === "Market Value") {
             const mv = Number(matchedItem.market_value);
             let finalPrice = mv;
@@ -514,84 +588,97 @@
             } else if (marketMarginType === "percentage") {
                 finalPrice = Math.round(mv * (1 + Number(marketMarginOffset) / 100));
             }
-            return { price: finalPrice, marketValue: mv };
+            basePrice = finalPrice;
         }
-
-        if (pricingSource === "Item Market" && itemId) {
+        else if (pricingSource === "Item Market" && itemId) {
             debug(`Calculating price via Item Market for ${itemName} (${itemId})`);
             const data = await safeExecute(fetchItemMarketData, 'Fetch Item Market Data')(itemId);
-            if (!data || !data.itemmarket?.listings?.length) return null;
+            if (data && data.itemmarket?.listings?.length) {
+                itemMarketListings = data.itemmarket.listings;
+                const baseIndex = Math.min(itemMarketListing - 1, itemMarketListings.length - 1);
+                const listingPrice = Number(itemMarketListings[baseIndex].price);
 
-            const listings = data.itemmarket.listings;
-            const baseIndex = Math.min(itemMarketListing - 1, listings.length - 1);
-            const listingPrice = Number(listings[baseIndex].price);
-
-            let finalPrice;
-            if (itemMarketMarginType === "absolute") {
-                finalPrice = listingPrice + Number(itemMarketOffset);
-            } else if (itemMarketMarginType === "percentage") {
-                finalPrice = Math.round(listingPrice * (1 + Number(itemMarketOffset) / 100));
-            } else {
-                finalPrice = listingPrice;
-            }
-
-            if (itemMarketClamp && matchedItem.market_value) {
-                finalPrice = Math.max(finalPrice, Number(matchedItem.market_value));
-            }
-
-            if (clampMinIMEnabled) {
-                const lowest = await getLowestItemMarketPrice(itemId);
-                if (lowest !== null && !isNaN(Number(lowest))) {
-                    const minAllowed = Math.round(Number(lowest) * (1 - (clampMinIMPercent / 100)));
-                    finalPrice = Math.max(finalPrice, minAllowed);
+                let finalPrice;
+                if (itemMarketMarginType === "absolute") {
+                    finalPrice = listingPrice + Number(itemMarketOffset);
+                    debug(`[Item Market Detail] Selected listing index: ${itemMarketListing} (Base Price: ${listingPrice}), Offset: ${itemMarketOffset} absolute. Calculated Price = ${finalPrice}`);
+                } else if (itemMarketMarginType === "percentage") {
+                    finalPrice = Math.round(listingPrice * (1 + Number(itemMarketOffset) / 100));
+                    debug(`[Item Market Detail] Selected listing index: ${itemMarketListing} (Base Price: ${listingPrice}), Offset: ${itemMarketOffset}%. Calculated Price = ${finalPrice}`);
+                } else {
+                    finalPrice = listingPrice;
+                    debug(`[Item Market Detail] Selected listing index: ${itemMarketListing} (Base Price: ${listingPrice}), No Offset. Calculated Price = ${finalPrice}`);
                 }
+                basePrice = finalPrice;
             }
-
-            return {
-                price: finalPrice,
-                marketValue: Number(matchedItem.market_value),
-                listings: listings.slice(0, 5)
-            };
         }
-
-        if (pricingSource === "Bazaars/weav3r.dev") {
-            if (!itemId) {
-                debug(`No item ID for ${itemName}, cannot fetch weav3r.dev data`);
-                return null;
-            }
+        else if (pricingSource === "Bazaars/weav3r.dev" && itemId) {
             debug(`Calculating price via weav3r.dev for ${itemName} (${itemId})`);
-
             const itemData = await safeExecute(fetchWeav3rItemData, 'Fetch weav3r.dev Item Data')(itemId);
-            if (!itemData || !itemData.listings || itemData.listings.length === 0) return null;
+            if (itemData && itemData.listings && itemData.listings.length > 0) {
+                weav3rListings = itemData.listings;
+                const baseIndex = Math.min(bazaarListing - 1, weav3rListings.length - 1);
+                const basePriceVal = Number(weav3rListings[baseIndex].price);
 
-            const baseIndex = Math.min(bazaarListing - 1, itemData.listings.length - 1);
-            const basePrice = Number(itemData.listings[baseIndex].price);
-
-            let finalPrice;
-            if (bazaarMarginType === "absolute") {
-                finalPrice = basePrice + Number(bazaarMarginOffset);
-            } else if (bazaarMarginType === "percentage") {
-                finalPrice = Math.round(basePrice * (1 + Number(bazaarMarginOffset) / 100));
-            } else {
-                finalPrice = basePrice;
-            }
-
-            if (bazaarClamp && matchedItem.market_value) {
-                finalPrice = Math.max(finalPrice, Number(matchedItem.market_value));
-            }
-
-            if (clampMinIMEnabled && itemId) {
-                const lowest = await getLowestItemMarketPrice(itemId);
-                if (lowest !== null && !isNaN(Number(lowest))) {
-                    const minAllowed = Math.round(Number(lowest) * (1 - (clampMinIMPercent / 100)));
-                    finalPrice = Math.max(finalPrice, minAllowed);
+                let finalPrice;
+                if (bazaarMarginType === "absolute") {
+                    finalPrice = basePriceVal + Number(bazaarMarginOffset);
+                    debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), Offset: ${bazaarMarginOffset} absolute. Calculated Price = ${finalPrice}`);
+                } else if (bazaarMarginType === "percentage") {
+                    finalPrice = Math.round(basePriceVal * (1 + Number(bazaarMarginOffset) / 100));
+                    debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), Offset: ${bazaarMarginOffset}%. Calculated Price = ${finalPrice}`);
+                } else {
+                    finalPrice = basePriceVal;
+                    debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), No Offset. Calculated Price = ${finalPrice}`);
                 }
+                basePrice = finalPrice;
             }
-
-            return { price: finalPrice, marketValue: Number(matchedItem.market_value) };
         }
 
-        return null;
+        // Evaluate floor clamps
+        let rrpClampValue = 0;
+        let imClampValue = 0;
+
+        // Clamp to Market Value (RRP)
+        const isRRPClampEnabled = (pricingSource === "Bazaars/weav3r.dev" && bazaarClamp) ||
+                                   (pricingSource === "Item Market" && itemMarketClamp);
+        if (isRRPClampEnabled && matchedItem.market_value) {
+            rrpClampValue = Number(matchedItem.market_value);
+        }
+
+        // Clamp to Item Market - X%
+        if (clampMinIMEnabled && itemId) {
+            const lowest = await getLowestItemMarketPrice(itemId);
+            if (lowest !== null && !isNaN(Number(lowest))) {
+                imClampValue = Math.round(Number(lowest) * (1 - (clampMinIMPercent / 100)));
+            }
+        }
+
+        // The final price is the MAXIMUM of the base price and any active clamps (as floors)
+        let finalPrice = basePrice;
+        let clampApplied = "None";
+
+        if (rrpClampValue > finalPrice) {
+            finalPrice = rrpClampValue;
+            clampApplied = `Market Value (RRP) Clamp ($${rrpClampValue.toLocaleString()})`;
+        }
+        if (imClampValue > finalPrice) {
+            finalPrice = imClampValue;
+            clampApplied = `Item Market - ${clampMinIMPercent}% Clamp ($${imClampValue.toLocaleString()})`;
+        }
+
+        debug(`Price calculation for ${itemName}: Base Price = ${basePrice}, RRP Clamp = ${rrpClampValue}, IM Clamp = ${imClampValue}. Final Price = ${finalPrice} (Clamp applied: ${clampApplied})`);
+
+        return {
+            price: finalPrice,
+            marketValue: Number(matchedItem.market_value),
+            basePrice: basePrice,
+            rrpClampValue: rrpClampValue,
+            imClampValue: imClampValue,
+            clampApplied: clampApplied,
+            pricingSourceUsed: pricingSourceUsed,
+            listings: weav3rListings ? weav3rListings.slice(0, 5) : (itemMarketListings ? itemMarketListings.slice(0, 5) : null)
+        };
     }
 
     function parseShortNumber(input) {
@@ -669,7 +756,7 @@
         if (!$priceInput.data("orig"))
             $priceInput.data("orig", $priceInput.val());
 
-        const itemName = $row.find(".name-wrap span.t-overflow").text().trim();
+        const itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
         const priceData = await calculatePrice(itemName, itemId, matchedItem);
@@ -689,7 +776,31 @@
         $row.find(".city-warning").remove();
         $toggle.removeClass("item-toggle-red");
 
-        if (lockCityBetter && matchedItem.city_price && priceData && Number(matchedItem.city_price) > priceData.price) {
+        // 1. Populate price input box first, so visual information is updated before any checks
+        if (blackFridayMode) {
+            $priceInput.val("1");
+            $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+            $priceInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
+        } else if (priceData) {
+            $priceInput.val(priceData.price.toLocaleString("en-US"));
+            $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+            $priceInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
+
+            if (priceData.marketValue) {
+                $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
+            }
+
+            if (priceData.listings) {
+                const $priceInputWrapper = $row.find(".price").first();
+                if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
+                    const listingsBtn = createListingsButton(priceData.listings);
+                    $priceInputWrapper.append(listingsBtn);
+                }
+            }
+        }
+
+        // 2. Evaluate lockCityBetter check
+        if (!blackFridayMode && lockCityBetter && matchedItem.city_price && priceData && Number(matchedItem.city_price) > priceData.price) {
             debug(`City price ($${matchedItem.city_price}) is better than calculated price ($${priceData.price}) for ${itemName}. Locking.`);
             quantityToSell = 0;
             $toggle.addClass("item-toggle-red");
@@ -703,35 +814,14 @@
             }
         }
 
+        // 3. Populate quantity input box
         if (quantityToSell !== undefined) {
             $qtyInput.val(quantityToSell);
             $qtyInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
         }
 
-        if (blackFridayMode) {
-            $priceInput.val("1");
-            $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
-            $priceInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
-            return;
-        }
-
+        if (blackFridayMode) return;
         if (!priceData) return;
-
-        if (priceData.listings) {
-            const $priceInputWrapper = $row.find(".price").first();
-            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
-                const listingsBtn = createListingsButton(priceData.listings);
-                $priceInputWrapper.append(listingsBtn);
-            }
-        }
-
-        $priceInput.val(priceData.price.toLocaleString("en-US"));
-        $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
-        $priceInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
-
-        if (priceData.marketValue) {
-            $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
-        }
     }
     async function updateManageRow($row, isChecked, isManual = false) {
         const $priceInput = $row.find('[class*="price___"] .input-money-group.success input.input-money').first();
@@ -772,7 +862,7 @@
             return;
         }
 
-        const itemName = $row.find('[class*="desc___"] b').text().trim();
+        const itemName = cleanItemName($row.find('[class*="desc___"] b').text());
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
@@ -783,6 +873,23 @@
         $row.find(".city-warning").remove();
         $toggle.removeClass("item-toggle-red");
 
+        // 1. Populate price input box first, so visual information is updated before any checks
+        $priceInput.val(priceData.price.toLocaleString("en-US"));
+        $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+
+        if (priceData.marketValue) {
+            $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
+        }
+
+        if (priceData.listings) {
+            const $priceInputWrapper = $row.find('[class*="price___"]').first();
+            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
+                const listingsBtn = createListingsButton(priceData.listings);
+                $priceInputWrapper.append(listingsBtn);
+            }
+        }
+
+        // 2. Evaluate lockCityBetter check
         if (lockCityBetter && matchedItem.city_price && Number(matchedItem.city_price) > priceData.price) {
             if ($qtyInput.length) {
                 $qtyInput.val("0");
@@ -797,21 +904,6 @@
             if (isChecked && isManual) {
                 showCenterModalTip(warningMsg, "City Shop Warning");
             }
-        }
-
-        if (priceData.listings) {
-            const $priceInputWrapper = $row.find('[class*="price___"]').first();
-            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
-                const listingsBtn = createListingsButton(priceData.listings);
-                $priceInputWrapper.append(listingsBtn);
-            }
-        }
-
-        $priceInput.val(priceData.price.toLocaleString("en-US"));
-        $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
-
-        if (priceData.marketValue) {
-            $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
     async function updateManageRowMobile($row, isChecked, isManual = false) {
@@ -855,7 +947,7 @@
             return;
         }
 
-        const itemName = $row.find('[class*="desc___"] b').text().trim();
+        const itemName = cleanItemName($row.find('[class*="desc___"] b').text());
         const itemId = getItemIdByName(itemName);
         const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
 
@@ -866,6 +958,23 @@
         $row.find(".city-warning").remove();
         $toggle.removeClass("item-toggle-red");
 
+        // 1. Populate price input box first, so visual information is updated before any checks
+        $priceInput.val(priceData.price.toLocaleString("en-US"));
+        $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+
+        if (priceData.marketValue) {
+            $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
+        }
+
+        if (priceData.listings) {
+            const $priceInputWrapper = $row.find("[class*=priceMobile___]").first();
+            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
+                const listingsBtn = createListingsButton(priceData.listings);
+                $priceInputWrapper.append(listingsBtn);
+            }
+        }
+
+        // 2. Evaluate lockCityBetter check
         if (lockCityBetter && matchedItem.city_price && Number(matchedItem.city_price) > priceData.price) {
             if ($qtyInput.length) {
                 $qtyInput.val("0");
@@ -880,21 +989,6 @@
             if (isChecked && isManual) {
                 showCenterModalTip(warningMsg, "City Shop Warning");
             }
-        }
-
-        if (priceData.listings) {
-            const $priceInputWrapper = $row.find("[class*=priceMobile___]").first();
-            if ($priceInputWrapper.length && $priceInputWrapper.find(".bf-listings-btn").length === 0) {
-                const listingsBtn = createListingsButton(priceData.listings);
-                $priceInputWrapper.append(listingsBtn);
-            }
-        }
-
-        $priceInput.val(priceData.price.toLocaleString("en-US"));
-        $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
-
-        if (priceData.marketValue) {
-            $priceInput.css("color", getPriceColor(priceData.price, priceData.marketValue));
         }
     }
 
@@ -1128,38 +1222,6 @@
             return btn;
         }
 
-    function createListingsButton(listings) {
-        const listingsText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} x${x.amount}`).join("\n");
-        const btn = document.createElement('div');
-        btn.className = 'bf-listings-btn';
-        btn.textContent = 'i';
-        btn.dataset.tip = listingsText;
-
-        const showModal = (e) => {
-            e.stopPropagation();
-            const formattedText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} (x${x.amount.toLocaleString("en-US")})`).join("<br>");
-            showCenterModalTip(formattedText, "Cheapest Market Listings");
-        };
-
-        const showTip = () => {
-            if (!('ontouchstart' in window) && window.innerWidth >= 720) {
-                showBubble(btn.getBoundingClientRect(), listingsText);
-            }
-        };
-
-        const hideTip = () => {
-            if (!('ontouchstart' in window) && window.innerWidth >= 720) {
-                hideBubble();
-            }
-        };
-
-        btn.addEventListener('click', showModal);
-        btn.addEventListener('mouseenter', showTip);
-        btn.addEventListener('mouseleave', hideTip);
-
-        return btn;
-    }
-
         $("#settings-save").click(function () {
             var _a;
             apiKey = ((_a = $("#api-key-input").val()) === null || _a === void 0 ? void 0 : _a.trim()) || "";
@@ -1366,9 +1428,9 @@
                     const $row = $(this).closest('li.clearfix, [class*="item___"]');
                     let itemName = "";
                     if ($row.is('li.clearfix')) {
-                        itemName = $row.find(".name-wrap span.t-overflow").text().trim();
+                        itemName = cleanItemName($row.find(".name-wrap span.t-overflow").text());
                     } else {
-                        itemName = $row.find('[class*="desc___"] b').text().trim();
+                        itemName = cleanItemName($row.find('[class*="desc___"] b').text());
                     }
                     const itemId = getItemIdByName(itemName);
                     if (itemId) {
@@ -1667,6 +1729,38 @@
         itemMarketCache = {};
         weav3rItemCache = {};
     });
+
+    function createListingsButton(listings) {
+        const listingsText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} x${x.amount}`).join("\n");
+        const btn = document.createElement('div');
+        btn.className = 'bf-listings-btn';
+        btn.textContent = 'i';
+        btn.dataset.tip = listingsText;
+
+        const showModal = (e) => {
+            e.stopPropagation();
+            const formattedText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} (x${x.amount.toLocaleString("en-US")})`).join("<br>");
+            showCenterModalTip(formattedText, "Cheapest Market Listings");
+        };
+
+        const showTip = () => {
+            if (!('ontouchstart' in window) && window.innerWidth >= 720) {
+                showBubble(btn.getBoundingClientRect(), listingsText);
+            }
+        };
+
+        const hideTip = () => {
+            if (!('ontouchstart' in window) && window.innerWidth >= 720) {
+                hideBubble();
+            }
+        };
+
+        btn.addEventListener('click', showModal);
+        btn.addEventListener('mouseenter', showTip);
+        btn.addEventListener('mouseleave', hideTip);
+
+        return btn;
+    }
 
     function copySidebarLinkClasses(linkEl, iconSpan, textSpan, linksContainer) {
         const refLink = linksContainer.querySelector("a[href]:not(#pricing-source-button):not(#black-friday-toggle)")
