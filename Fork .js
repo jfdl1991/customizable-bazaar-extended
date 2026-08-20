@@ -284,8 +284,13 @@
                 return;
             }
 
+            const allListings = data.listings.filter((listing) => !listing.sponsored);
+            if (allListings.length === 0) {
+                showCenterModalTip("No bazaar listings available for this item on weav3r.dev", "No Data");
+                return;
+            }
+
             let shownCount = 5;
-            const allListings = data.listings;
             
             function updateModalContent() {
                 const currentListings = allListings.slice(0, shownCount);
@@ -616,22 +621,24 @@
             debug(`Calculating price via weav3r.dev for ${itemName} (${itemId})`);
             const itemData = await safeExecute(fetchWeav3rItemData, 'Fetch weav3r.dev Item Data')(itemId);
             if (itemData && itemData.listings && itemData.listings.length > 0) {
-                weav3rListings = itemData.listings;
-                const baseIndex = Math.min(bazaarListing - 1, weav3rListings.length - 1);
-                const basePriceVal = Number(weav3rListings[baseIndex].price);
+                weav3rListings = itemData.listings.filter((listing) => !listing.sponsored);
+                if (weav3rListings.length > 0) {
+                    const baseIndex = Math.min(bazaarListing - 1, weav3rListings.length - 1);
+                    const basePriceVal = Number(weav3rListings[baseIndex].price);
 
-                let finalPrice;
-                if (bazaarMarginType === "absolute") {
-                    finalPrice = basePriceVal + Number(bazaarMarginOffset);
-                    debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), Offset: ${bazaarMarginOffset} absolute. Calculated Price = ${finalPrice}`);
-                } else if (bazaarMarginType === "percentage") {
-                    finalPrice = Math.round(basePriceVal * (1 + Number(bazaarMarginOffset) / 100));
-                    debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), Offset: ${bazaarMarginOffset}%. Calculated Price = ${finalPrice}`);
-                } else {
-                    finalPrice = basePriceVal;
-                    debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), No Offset. Calculated Price = ${finalPrice}`);
+                    let finalPrice;
+                    if (bazaarMarginType === "absolute") {
+                        finalPrice = basePriceVal + Number(bazaarMarginOffset);
+                        debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), Offset: ${bazaarMarginOffset} absolute. Calculated Price = ${finalPrice}`);
+                    } else if (bazaarMarginType === "percentage") {
+                        finalPrice = Math.round(basePriceVal * (1 + Number(bazaarMarginOffset) / 100));
+                        debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), Offset: ${bazaarMarginOffset}%. Calculated Price = ${finalPrice}`);
+                    } else {
+                        finalPrice = basePriceVal;
+                        debug(`[weav3r.dev Detail] Selected listing index: ${bazaarListing} (Base Price: ${basePriceVal}), No Offset. Calculated Price = ${finalPrice}`);
+                    }
+                    basePrice = finalPrice;
                 }
-                basePrice = finalPrice;
             }
         }
 
@@ -1731,7 +1738,8 @@
     });
 
     function createListingsButton(listings) {
-        const listingsText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} x${x.amount}`).join("\n");
+        const getQty = (x) => Number(x.quantity || x.amount || 0);
+        const listingsText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} x${getQty(x).toLocaleString("en-US")}`).join("\n");
         const btn = document.createElement('div');
         btn.className = 'bf-listings-btn';
         btn.textContent = 'i';
@@ -1739,7 +1747,7 @@
 
         const showModal = (e) => {
             e.stopPropagation();
-            const formattedText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} (x${x.amount.toLocaleString("en-US")})`).join("<br>");
+            const formattedText = listings.map((x, i) => `${i + 1}) $${x.price.toLocaleString("en-US")} (x${getQty(x).toLocaleString("en-US")})`).join("<br>");
             showCenterModalTip(formattedText, "Cheapest Market Listings");
         };
 
