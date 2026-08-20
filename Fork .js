@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Customizable Bazaar Filler Extended
 // @namespace    j0se
-// @version      1.81.2 stable (v1.81 basic function with hardening + City Shop lock + Bazaar info feature)
+// @version      1.82.1 (v1.82 weav3r sync + interactive modal pricing + City Shop lock)
 // @description  On click, auto-fills bazaar item quantities and prices based on your preferences wuth caps, better explanation, mobike bubbles, debug, different bazaar choosing, etc
 // @match        https://www.torn.com/bazaar.php*
 // @require      https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js
@@ -97,6 +97,14 @@
       cursor: pointer; 
       text-decoration: underline dotted;
       text-align: left;
+  }
+
+  .clickable-modal-price {
+      text-decoration: underline dotted;
+      cursor: pointer;
+  }
+  .clickable-modal-price:hover {
+      opacity: 0.8;
   }
 
   .checkbox-wrapper{position:absolute;top:50%;right:8px;width:34px;height:34px;transform:translateY(-50%);cursor:pointer;z-index:10}
@@ -271,7 +279,7 @@
         return { totalQty, average, median };
     }
 
-    async function showBazaarDataModal(itemId, itemName, priceData = null) {
+    async function showBazaarDataModal(itemId, itemName, priceData = null, $targetRow = null) {
         if (!itemId) return;
         
         // Show loading state using existing modal function
@@ -291,6 +299,9 @@
             }
 
             let shownCount = 5;
+
+            const matchedItem = Object.values(cachedTornItems).find((i) => i.name === itemName);
+            const cityPrice = matchedItem && matchedItem.city_price ? Number(matchedItem.city_price) : 0;
             
             function updateModalContent() {
                 const currentListings = allListings.slice(0, shownCount);
@@ -302,17 +313,17 @@
                         <div style="background: rgba(255,255,255,0.06); border-left: 3px solid #28a745; padding: 8px; border-radius: 4px; margin-bottom: 10px; font-size: 12px; line-height: 1.4; text-align: left;">
                             <b>Pricing Breakdown:</b><br>
                             - Source: <span style="color: #ff9f43;">${priceData.pricingSourceUsed}</span><br>
-                            - Base Calculated Price: <span style="font-weight: bold;">$${Number(priceData.basePrice || 0).toLocaleString()}</span><br>
-                            - Clamps: RRP Floor = $${Number(priceData.rrpClampValue || 0).toLocaleString()}, IM Floor = $${Number(priceData.imClampValue || 0).toLocaleString()}<br>
-                            - Final Applied Price: <span style="color: #28a745; font-weight: bold;">$${Number(priceData.price || 0).toLocaleString()}</span> ${priceData.clampApplied !== "None" ? `<br><span style="color: #ee5253; font-size: 11px;">(via ${priceData.clampApplied})</span>` : ""}
+                            - Base Calculated Price: <span style="font-weight: bold;"><span class="clickable-modal-price" data-price="${priceData.basePrice || 0}">$${Number(priceData.basePrice || 0).toLocaleString()}</span></span><br>
+                            - Clamps: RRP Floor = <span class="clickable-modal-price" data-price="${priceData.rrpClampValue || 0}">$${Number(priceData.rrpClampValue || 0).toLocaleString()}</span>, IM Floor = <span class="clickable-modal-price" data-price="${priceData.imClampValue || 0}">$${Number(priceData.imClampValue || 0).toLocaleString()}</span><br>
+                            - Final Applied Price: <span style="color: #28a745; font-weight: bold;"><span class="clickable-modal-price" data-price="${priceData.price || 0}">$${Number(priceData.price || 0).toLocaleString()}</span></span> ${priceData.clampApplied !== "None" ? `<br><span style="color: #ee5253; font-size: 11px;">(via ${priceData.clampApplied})</span>` : ""}
                         </div>
                     `;
                 }
 
                 const statsGrid = `
                     <div class="bazaar-stats-grid">
-                        <div><b>Market Price</b><br>$${Number(data.market_price || 0).toLocaleString()}</div>
-                        <div><b>Bazaar Avg</b><br>$${Number(data.bazaar_average || 0).toLocaleString()}</div>
+                        <div><b>Market Price</b><br><span class="clickable-modal-price" data-price="${data.market_price || 0}">$${Number(data.market_price || 0).toLocaleString()}</span></div>
+                        <div><b>Bazaar Avg</b><br><span class="clickable-modal-price" data-price="${data.bazaar_average || 0}">$${Number(data.bazaar_average || 0).toLocaleString()}</span></div>
                         <div><b>Total Lists</b><br>${Number(data.total_listings || 0).toLocaleString()}</div>
                     </div>
                 `;
@@ -321,7 +332,7 @@
                 for (const l of currentListings) {
                     tableRows += `
                         <tr>
-                            <td>$${Number(l.price).toLocaleString()}</td>
+                            <td><span class="clickable-modal-price" data-price="${l.price}">$${Number(l.price).toLocaleString()}</span></td>
                             <td>${Number(l.quantity || l.amount).toLocaleString()}</td>
                             <td>${l.player_name || 'N/A'}</td>
                         </tr>
@@ -341,10 +352,21 @@
                     <div class="bazaar-summary-line">
                         <b>Current View Stats:</b><br>
                         Total Qty Shown: ${stats.totalQty.toLocaleString()}<br>
-                        Weighted Avg: $${stats.average.toLocaleString()}<br>
-                        Median: $${stats.median.toLocaleString()}
+                        Weighted Avg: <span class="clickable-modal-price" data-price="${stats.average}">$${stats.average.toLocaleString()}</span><br>
+                        Median: <span class="clickable-modal-price" data-price="${stats.median}">$${stats.median.toLocaleString()}</span>
                     </div>
                 `;
+
+                let cityPriceHtml = "";
+                if (cityPrice > 0) {
+                    const isLowerThanCity = priceData && priceData.price < cityPrice;
+                    const style = isLowerThanCity ? "color:#ff4444; font-weight:bold;" : "color:#aaa;";
+                    cityPriceHtml = `
+                        <div style="margin-top: 8px; font-size: 11px; text-align: right; ${style}">
+                            City price: <span class="clickable-modal-price" data-price="${cityPrice}">$${cityPrice.toLocaleString()}</span>
+                        </div>
+                    `;
+                }
 
                 const loadMoreBtn = shownCount < allListings.length 
                     ? `<button class="bazaar-load-more" id="bazaar-btn-load-more">Show 5 More Bazaar Listings</button>` 
@@ -357,6 +379,7 @@
                         ${table}
                     </div>
                     ${summary}
+                    ${cityPriceHtml}
                     ${loadMoreBtn}
                 `;
 
@@ -374,6 +397,16 @@
                             updateModalContent();
                         };
                     }
+
+                    // Attach click handler to all clickable prices in modal
+                    $(modal).find('.clickable-modal-price').off('click').on('click', function(e) {
+                        e.stopPropagation();
+                        const selectedPrice = Number($(this).attr('data-price') || 0);
+                        if (selectedPrice <= 0 || !$targetRow || !$targetRow.length) return;
+
+                        applyModalSelectedPrice($targetRow, selectedPrice, itemName, matchedItem);
+                        modal.style.display = 'none';
+                    });
                 }
             }
 
@@ -708,6 +741,8 @@
         const maxByKeep = Math.max(totalOwned - minKeep, 0);
 
         let maxByMoney = totalOwned;
+        // Money limit calculation adapts quantity based on unitPrice to prevent buymug risk in Torn.com
+        // (buymug: when a buyer purchases large quantities and immediately mug/attacks the seller for cash).
         if (moneyLimitEnabled && unitPrice && !isNaN(unitPrice) && Number(unitPrice) > 0) {
             maxByMoney = Math.floor(moneyLimitValue / Number(unitPrice));
             if (isNaN(maxByMoney) || !isFinite(maxByMoney)) maxByMoney = totalOwned;
@@ -723,6 +758,76 @@
 
         finalQty = Math.max(0, Math.floor(finalQty || 0));
         return finalQty;
+    }
+
+    function applyModalSelectedPrice($row, selectedPrice, itemName, matchedItem) {
+        debug(`Applying modal-selected price $${selectedPrice} to row for ${itemName}`);
+
+        // Find price input in row (Add page, Manage page desktop, or Manage page mobile)
+        let $priceInput = $row.find(".price input").first();
+        if (!$priceInput.length) {
+            $priceInput = $row.find('[class*="price___"] .input-money-group.success input.input-money').first();
+        }
+        if (!$priceInput.length) {
+            $priceInput = $row.find("[class*=bottomMobileMenu___] [class*=priceMobile___] .input-money-group.success input.input-money").first();
+        }
+
+        if (!$priceInput.length) {
+            console.error("Price input not found in row for modal price selection.");
+            return;
+        }
+
+        const $qtyInput = $row.find(".amount input").first();
+        const $toggle = $row.find(".item-toggle");
+        $row.find(".city-warning").remove();
+        $toggle.removeClass("item-toggle-red");
+
+        // 1. Populate selected price into price input box
+        $priceInput.val(selectedPrice.toLocaleString("en-US"));
+        $priceInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+        $priceInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
+
+        if (matchedItem && matchedItem.market_value) {
+            $priceInput.css("color", getPriceColor(selectedPrice, matchedItem.market_value));
+        }
+
+        // 2. Evaluate lockCityBetter check
+        const cityPrice = matchedItem && matchedItem.city_price ? Number(matchedItem.city_price) : 0;
+        let isLockedByCity = false;
+
+        if (lockCityBetter && cityPrice > 0 && cityPrice > selectedPrice) {
+            debug(`City price ($${cityPrice}) is better than selected modal price ($${selectedPrice}) for ${itemName}. Locking.`);
+            isLockedByCity = true;
+            $toggle.addClass("item-toggle-red");
+            const warningMsg = `You would get more money selling this item in the city shop ($${cityPrice.toLocaleString()}) than in your bazaar ($${selectedPrice.toLocaleString()}).`;
+            const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
+            $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
+            $row.css('flex-wrap', 'wrap').append($warn);
+
+            if ($qtyInput.length) {
+                $qtyInput.val("0");
+                $qtyInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+                $qtyInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
+            }
+            showCenterModalTip(warningMsg, "City Shop Warning");
+        }
+
+        // 3. Recalculate quantity if not locked by city shop
+        if (!isLockedByCity && $qtyInput.length) {
+            let totalOwned = 0;
+            if ($row.find(".item-amount.qty").length) {
+                totalOwned = parseInt($row.find(".item-amount.qty").text().trim().replace(/,/g, ''), 10) || 0;
+            } else if ($qtyInput.data("orig")) {
+                totalOwned = parseInt($qtyInput.data("orig"), 10) || 0;
+            } else {
+                totalOwned = parseInt($qtyInput.val(), 10) || 0;
+            }
+
+            const newQty = calculateQuantityToSell(totalOwned, selectedPrice);
+            $qtyInput.val(newQty);
+            $qtyInput[0].dispatchEvent(new Event("input", { bubbles: true }));
+            $qtyInput[0].dispatchEvent(new Event("keyup", { bubbles: true }));
+        }
     }
 
     async function updateAddRow($row, isChecked, isManual = false) {
@@ -1441,7 +1546,7 @@
                     }
                     const itemId = getItemIdByName(itemName);
                     if (itemId) {
-                        showBazaarDataModal(itemId, itemName);
+                        showBazaarDataModal(itemId, itemName, null, $row);
                     }
                 }
 
