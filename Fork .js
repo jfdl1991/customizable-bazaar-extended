@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Customizable Bazaar Filler Extended
 // @namespace    j0se
-// @version      1.82.1 (v1.82 weav3r sync + interactive modal pricing + City Shop lock)
+// @version      1.82.2 (v1.82 weav3r sync + red city price modal highlighting + manage page warning fix)
 // @description  On click, auto-fills bazaar item quantities and prices based on your preferences wuth caps, better explanation, mobike bubbles, debug, different bazaar choosing, etc
 // @match        https://www.torn.com/bazaar.php*
 // @require      https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js
@@ -306,6 +306,15 @@
             function updateModalContent() {
                 const currentListings = allListings.slice(0, shownCount);
                 const stats = calculateBazaarStats(currentListings);
+                let hasLowerPriceThanCity = false;
+
+                function renderModalPrice(val) {
+                    const numVal = Number(val || 0);
+                    const isLower = cityPrice > 0 && numVal > 0 && numVal < cityPrice;
+                    if (isLower) hasLowerPriceThanCity = true;
+                    const extraStyle = isLower ? "color: #ff4444 !important; font-weight: bold;" : "";
+                    return `<span class="clickable-modal-price" data-price="${numVal}" style="${extraStyle}">$${numVal.toLocaleString()}</span>`;
+                }
                 
                 let breakdownHtml = "";
                 if (priceData) {
@@ -313,17 +322,17 @@
                         <div style="background: rgba(255,255,255,0.06); border-left: 3px solid #28a745; padding: 8px; border-radius: 4px; margin-bottom: 10px; font-size: 12px; line-height: 1.4; text-align: left;">
                             <b>Pricing Breakdown:</b><br>
                             - Source: <span style="color: #ff9f43;">${priceData.pricingSourceUsed}</span><br>
-                            - Base Calculated Price: <span style="font-weight: bold;"><span class="clickable-modal-price" data-price="${priceData.basePrice || 0}">$${Number(priceData.basePrice || 0).toLocaleString()}</span></span><br>
-                            - Clamps: RRP Floor = <span class="clickable-modal-price" data-price="${priceData.rrpClampValue || 0}">$${Number(priceData.rrpClampValue || 0).toLocaleString()}</span>, IM Floor = <span class="clickable-modal-price" data-price="${priceData.imClampValue || 0}">$${Number(priceData.imClampValue || 0).toLocaleString()}</span><br>
-                            - Final Applied Price: <span style="color: #28a745; font-weight: bold;"><span class="clickable-modal-price" data-price="${priceData.price || 0}">$${Number(priceData.price || 0).toLocaleString()}</span></span> ${priceData.clampApplied !== "None" ? `<br><span style="color: #ee5253; font-size: 11px;">(via ${priceData.clampApplied})</span>` : ""}
+                            - Base Calculated Price: <span style="font-weight: bold;">${renderModalPrice(priceData.basePrice)}</span><br>
+                            - Clamps: RRP Floor = ${renderModalPrice(priceData.rrpClampValue)}, IM Floor = ${renderModalPrice(priceData.imClampValue)}<br>
+                            - Final Applied Price: <span style="color: #28a745; font-weight: bold;">${renderModalPrice(priceData.price)}</span> ${priceData.clampApplied !== "None" ? `<br><span style="color: #ee5253; font-size: 11px;">(via ${priceData.clampApplied})</span>` : ""}
                         </div>
                     `;
                 }
 
                 const statsGrid = `
                     <div class="bazaar-stats-grid">
-                        <div><b>Market Price</b><br><span class="clickable-modal-price" data-price="${data.market_price || 0}">$${Number(data.market_price || 0).toLocaleString()}</span></div>
-                        <div><b>Bazaar Avg</b><br><span class="clickable-modal-price" data-price="${data.bazaar_average || 0}">$${Number(data.bazaar_average || 0).toLocaleString()}</span></div>
+                        <div><b>Market Price</b><br>${renderModalPrice(data.market_price)}</div>
+                        <div><b>Bazaar Avg</b><br>${renderModalPrice(data.bazaar_average)}</div>
                         <div><b>Total Lists</b><br>${Number(data.total_listings || 0).toLocaleString()}</div>
                     </div>
                 `;
@@ -332,7 +341,7 @@
                 for (const l of currentListings) {
                     tableRows += `
                         <tr>
-                            <td><span class="clickable-modal-price" data-price="${l.price}">$${Number(l.price).toLocaleString()}</span></td>
+                            <td>${renderModalPrice(l.price)}</td>
                             <td>${Number(l.quantity || l.amount).toLocaleString()}</td>
                             <td>${l.player_name || 'N/A'}</td>
                         </tr>
@@ -352,18 +361,17 @@
                     <div class="bazaar-summary-line">
                         <b>Current View Stats:</b><br>
                         Total Qty Shown: ${stats.totalQty.toLocaleString()}<br>
-                        Weighted Avg: <span class="clickable-modal-price" data-price="${stats.average}">$${stats.average.toLocaleString()}</span><br>
-                        Median: <span class="clickable-modal-price" data-price="${stats.median}">$${stats.median.toLocaleString()}</span>
+                        Weighted Avg: ${renderModalPrice(stats.average)}<br>
+                        Median: ${renderModalPrice(stats.median)}
                     </div>
                 `;
 
                 let cityPriceHtml = "";
                 if (cityPrice > 0) {
-                    const isLowerThanCity = priceData && priceData.price < cityPrice;
-                    const style = isLowerThanCity ? "color:#ff4444; font-weight:bold;" : "color:#aaa;";
+                    const style = hasLowerPriceThanCity ? "color:#ff4444; font-weight:bold;" : "color:#aaa;";
                     cityPriceHtml = `
                         <div style="margin-top: 8px; font-size: 11px; text-align: right; ${style}">
-                            City price: <span class="clickable-modal-price" data-price="${cityPrice}">$${cityPrice.toLocaleString()}</span>
+                            City price: ${renderModalPrice(cityPrice)}
                         </div>
                     `;
                 }
@@ -919,7 +927,13 @@
             const warningMsg = `You would get more money selling this item in the city shop ($${Number(matchedItem.city_price).toLocaleString()}) than in your bazaar ($${priceData.price.toLocaleString()}).`;
             const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
             $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
-            $row.css('flex-wrap', 'wrap').append($warn);
+
+            const $desc = $row.find('[class*="desc___"]').first();
+            if ($desc.length) {
+                $desc.append($warn);
+            } else {
+                $row.css('flex-wrap', 'wrap').append($warn);
+            }
 
             if (isChecked && isManual) {
                 showCenterModalTip(warningMsg, "City Shop Warning");
@@ -1011,7 +1025,13 @@
             const warningMsg = `You would get more money selling this item in the city shop ($${Number(matchedItem.city_price).toLocaleString()}) than in your bazaar ($${priceData.price.toLocaleString()}).`;
             const $warn = $(`<div class="city-warning">⚠ City price is better!</div>`);
             $warn.on('click', (e) => { e.stopPropagation(); showCenterModalTip(warningMsg, "City Shop Warning"); });
-            $row.css('flex-wrap', 'wrap').append($warn);
+
+            const $desc = $row.find('[class*="desc___"]').first();
+            if ($desc.length) {
+                $desc.append($warn);
+            } else {
+                $row.css('flex-wrap', 'wrap').append($warn);
+            }
 
             if (isChecked && isManual) {
                 showCenterModalTip(warningMsg, "City Shop Warning");
