@@ -9,8 +9,9 @@
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @connect      weav3r.dev
-// @downloadURL not available yet
-// @updateURL not available yet
+// @downloadURL https://update.greasyfork.org/scripts/598069/Customizable Bazaar Filler Extended.user.js
+// @updateURL https://update.greasyfork.org/scripts/598069/Customizable Bazaar Filler Extended.meta.js
+// @license      CC-BY-NC-4.0
 // ==/UserScript==
 
 (function () {
